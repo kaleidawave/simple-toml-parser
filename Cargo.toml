@@ -1,0 +1,20 @@
+[package]
+name = "simple-toml-parser"
+version = "0.0.0"
+edition = "2021"
+description = "No allocation TOML key value parser with comment support"
+authors = ["Ben <kaleidawave@gmail.com>"]
+license = "MIT"
+keywords = ["toml"]
+categories = ["parser-implementations"]
+repository = "https://github.com/kaleidawave/simple-toml-parser"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[lib]
+path = "lib.rs"
+
+[lints.clippy]
+pedantic = "deny"
