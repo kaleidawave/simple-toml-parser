@@ -40,7 +40,7 @@ ip = "10.0.0.2"
     //     })
     //     .unwrap_or_default();
 
-    parse_toml(&source, |keys, value| {
+    parse_toml(&source, |keys, _, value| {
         eprintln!("{keys:?} -> {value:?}");
     })
     .unwrap();
