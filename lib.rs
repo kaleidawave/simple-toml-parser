@@ -4,12 +4,24 @@ pub enum Joined {
     Dot,
 }
 
-/// TODO level?
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Level {
+    Table,
+    Specifier,
+    InObject,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TOMLKey<'a> {
-    /// Joined also preserves formatting
-    Slice(&'a str, Joined),
+    Slice(&'a str),
     Index(usize),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TOMLKeyMetadata(pub Joined, pub Level);
+
+impl TOMLKeyMetadata {
+    const UNKNOWN: Self = TOMLKeyMetadata(Joined::Alone, Level::Table);
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -51,15 +63,16 @@ impl std::fmt::Display for TOMLParseError {
 }
 
 /// If you want to return early (not parse the whole input) use [`parse_with_exit_signal`]
+/// and that contains more information about keys
 ///
 /// # Errors
 /// Returns an error if it tries to parse invalid TOML input
 pub fn parse<'a>(
     on: &'a str,
-    mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], ValueKeySplit, RootTOMLValue<'a>),
+    mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], RootTOMLValue<'a>),
 ) -> Result<(), TOMLParseError> {
-    parse_with_exit_signal(on, |k, s, v| {
-        cb(k, s, v);
+    parse_with_exit_signal(on, |k, _m, v| {
+        cb(k, v);
         false
     })
 }
@@ -82,10 +95,6 @@ enum State {
     },
 }
 
-/// Records when the index where `top_level` <-> `value_space` for TOML keys. This allows format preservation
-#[derive(Copy, Clone, Debug)]
-pub struct ValueKeySplit(pub u8);
-
 /// # Errors
 /// Returns an error if it tries to parse invalid TOML input
 ///
@@ -94,9 +103,10 @@ pub struct ValueKeySplit(pub u8);
 #[allow(clippy::too_many_lines)]
 pub fn parse_with_exit_signal<'a>(
     on: &'a str,
-    mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], ValueKeySplit, RootTOMLValue<'a>) -> bool,
+    mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b [TOMLKeyMetadata], RootTOMLValue<'a>) -> bool,
 ) -> Result<(), TOMLParseError> {
     let mut key_chain = Vec::new();
+    let mut key_chain_metadata = Vec::new();
     let mut chars = on.char_indices();
     let mut start = 0;
 
@@ -114,6 +124,7 @@ pub fn parse_with_exit_signal<'a>(
                         } else {
                             // TODO needed somewhere here
                             let _ = key_chain.drain(..);
+                            key_chain_metadata.drain(..);
                             start = idx + 1;
                             Context::Table
                         };
@@ -146,7 +157,8 @@ pub fn parse_with_exit_signal<'a>(
                 if let '"' = chr {
                     if *in_string {
                         let key = &on[start..idx];
-                        key_chain.push(TOMLKey::Slice(key, *joined));
+                        key_chain.push(TOMLKey::Slice(key));
+                        key_chain_metadata.push(TOMLKeyMetadata(Joined::Alone, Level::Table));
                     }
                     start += 1;
                     *in_string = !*in_string;
@@ -157,7 +169,8 @@ pub fn parse_with_exit_signal<'a>(
 
                 if let '.' = chr {
                     let key = &on[start..idx];
-                    key_chain.push(TOMLKey::Slice(key, *joined));
+                    key_chain.push(TOMLKey::Slice(key));
+                    key_chain_metadata.push(TOMLKeyMetadata(*joined, Level::Table));
                     *joined = Joined::Dot;
                     start = idx + chr.len_utf8();
                 }
@@ -168,7 +181,7 @@ pub fn parse_with_exit_signal<'a>(
                             // TODO
                             dbg!(chars.next());
                             // assert!(.unwrap().1 == ']');
-                        };
+                        }
                         let key = &on[start..idx];
                         if let Context::ArrayOfTables = context {
                             let idx = if let Some(TOMLKey::Index(idx)) = key_chain.last() {
@@ -176,10 +189,13 @@ pub fn parse_with_exit_signal<'a>(
                             } else {
                                 0
                             };
-                            key_chain.push(TOMLKey::Slice(key, *joined));
+                            key_chain.push(TOMLKey::Slice(key));
+                            key_chain_metadata.push(TOMLKeyMetadata::UNKNOWN);
                             key_chain.push(TOMLKey::Index(idx));
+                            key_chain_metadata.push(TOMLKeyMetadata::UNKNOWN);
                         } else {
-                            key_chain.push(TOMLKey::Slice(key, *joined));
+                            key_chain.push(TOMLKey::Slice(key));
+                            key_chain_metadata.push(TOMLKeyMetadata::UNKNOWN);
                         }
                         state = State::StartOfLine;
                         start = idx + 1;
@@ -189,20 +205,31 @@ pub fn parse_with_exit_signal<'a>(
                         let is_whitespace = chr.is_whitespace();
                         if is_equal || is_whitespace {
                             let key = &on[start..idx];
-                            key_chain.push(TOMLKey::Slice(key, *joined));
+                            if key.is_empty() {
+                                todo!("key is empty");
+                            }
+                            key_chain.push(TOMLKey::Slice(key));
+                            key_chain_metadata.push(TOMLKeyMetadata::UNKNOWN);
 
                             if is_equal {
                                 let _ = value::parse_with_exit_signal_chars(
                                     on,
                                     &mut chars,
                                     &mut key_chain,
+                                    &mut key_chain_metadata,
                                     &mut cb,
                                 );
                                 state = State::StartOfLine;
                                 {
                                     let mut popped = key_chain.pop();
-                                    while let Some(TOMLKey::Slice(_, Joined::Dot)) = popped {
+                                    let mut metadata = key_chain_metadata.pop();
+                                    while let (
+                                        Some(TOMLKey::Slice(_)),
+                                        Some(TOMLKeyMetadata(Joined::Dot, _)),
+                                    ) = (popped, metadata)
+                                    {
                                         popped = key_chain.pop();
+                                        metadata = key_chain_metadata.pop();
                                     }
                                 }
                             } else {
@@ -219,17 +246,22 @@ pub fn parse_with_exit_signal<'a>(
                         on,
                         &mut chars,
                         &mut key_chain,
+                        &mut key_chain_metadata,
                         &mut cb,
                     );
                     state = State::StartOfLine;
                     {
                         let mut popped = key_chain.pop();
-                        while let Some(TOMLKey::Slice(_, Joined::Dot)) = popped {
+                        let mut metadata = key_chain_metadata.pop();
+                        while let (Some(TOMLKey::Slice(_)), Some(TOMLKeyMetadata(Joined::Dot, _))) =
+                            (popped, metadata)
+                        {
                             popped = key_chain.pop();
+                            metadata = key_chain_metadata.pop();
                         }
                     }
                 } else if !chr.is_whitespace() {
-                    todo!("{chr:?}");
+                    todo!("{chr:?} {key_chain:?}");
                 }
             }
             State::InComment => {
@@ -297,7 +329,8 @@ pub fn parse_with_exit_signal<'a>(
 
 pub mod value {
     use super::{
-        Joined, RootTOMLValue, TOMLKey, TOMLParseError, TOMLParseErrorReason, ValueKeySplit,
+        Joined, Level, RootTOMLValue, TOMLKey, TOMLKeyMetadata, TOMLParseError,
+        TOMLParseErrorReason,
     };
 
     enum State {
@@ -317,6 +350,7 @@ pub mod value {
         ExpectingValue,
         StringValue {
             start: usize,
+            literal: bool,
             escaped: bool,
         },
         NumberValue {
@@ -332,11 +366,18 @@ pub mod value {
     /// errors on invalid TOML syntax
     pub fn parse_with_exit_signal<'a>(
         on: &'a str,
-        mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], ValueKeySplit, RootTOMLValue<'a>) -> bool,
+        mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b [TOMLKeyMetadata], RootTOMLValue<'a>) -> bool,
     ) -> Result<usize, TOMLParseError> {
         let mut chars = on.char_indices();
         let mut key_chain = Vec::new();
-        parse_with_exit_signal_chars(on, &mut chars, &mut key_chain, &mut cb)
+        let mut key_chain_metadata = Vec::new();
+        parse_with_exit_signal_chars(
+            on,
+            &mut chars,
+            &mut key_chain,
+            &mut key_chain_metadata,
+            &mut cb,
+        )
     }
 
     /// TODO: `allow_comments` fix
@@ -345,7 +386,8 @@ pub mod value {
         on: &'a str,
         chars: &mut std::str::CharIndices<'a>,
         key_chain: &mut Vec<TOMLKey<'a>>,
-        cb: &mut impl for<'b> FnMut(&'b [TOMLKey<'a>], ValueKeySplit, RootTOMLValue<'a>) -> bool,
+        key_chain_metadata: &mut Vec<TOMLKeyMetadata>,
+        cb: &mut impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b [TOMLKeyMetadata], RootTOMLValue<'a>) -> bool,
     ) -> Result<usize, TOMLParseError> {
         // Temp fix
         struct Options {
@@ -359,7 +401,6 @@ pub mod value {
         let mut state = State::ExpectingValue;
 
         let current_len = key_chain.len();
-        let split = ValueKeySplit(u8::try_from(current_len).expect("very deep key"));
 
         for (idx, chr) in chars {
             match state {
@@ -367,27 +408,32 @@ pub mod value {
                     state = match chr {
                         '[' => {
                             key_chain.push(TOMLKey::Index(0));
+                            key_chain_metadata.push(TOMLKeyMetadata(Joined::Dot, Level::InObject));
                             State::ExpectingValue
                         }
                         ']' => {
                             // TODO check
                             let _ = key_chain.pop();
+                            key_chain_metadata.pop();
                             State::EndOfValue
                         }
                         '{' => State::InObject,
                         '}' => {
-                            let mut popped = key_chain.pop();
+                            let popped = key_chain.pop();
+                            let mut metadata = key_chain_metadata.pop();
                             if let Some(TOMLKey::Index(..)) = popped {
                                 State::ExpectingValue
                             } else {
-                                while let Some(TOMLKey::Slice(_, Joined::Dot)) = popped {
-                                    popped = key_chain.pop();
+                                while let Some(TOMLKeyMetadata(Joined::Dot, _)) = metadata {
+                                    key_chain.pop();
+                                    metadata = key_chain_metadata.pop();
                                 }
                                 State::InObject
                             }
                         }
-                        '"' => State::StringValue {
-                            start: idx + '"'.len_utf8(),
+                        '"' | '\'' => State::StringValue {
+                            start: idx + 1,
+                            literal: chr == '\'',
                             escaped: false,
                         },
                         c @ ('/' | '#') if options.allow_comments => State::Comment {
@@ -423,14 +469,16 @@ pub mod value {
                     let is_whitespace = chr.is_whitespace();
                     if is_equal || is_whitespace {
                         let key = &on[*start..idx];
-                        key_chain.push(TOMLKey::Slice(key, joined));
+                        key_chain.push(TOMLKey::Slice(key));
+                        key_chain_metadata.push(TOMLKeyMetadata(joined, Level::InObject));
                         state = if is_equal {
                             State::ExpectingValue
                         } else {
                             State::Equal
                         };
                     } else if let '.' = chr {
-                        key_chain.push(TOMLKey::Slice(&on[*start..idx], joined));
+                        key_chain.push(TOMLKey::Slice(&on[*start..idx]));
+                        key_chain_metadata.push(TOMLKeyMetadata(joined, Level::InObject));
                         *start = idx + chr.len_utf8();
                         *last_was_dot = true;
                     } else {
@@ -445,10 +493,26 @@ pub mod value {
                 }
                 State::StringValue {
                     start,
+                    literal,
                     ref mut escaped,
                 } => {
-                    if !*escaped && chr == '"' {
-                        let res = cb(key_chain, split, RootTOMLValue::String(&on[start..idx]));
+                    // TODO WIP
+                    if !*escaped && !literal && chr == '"' {
+                        let res = cb(
+                            key_chain,
+                            key_chain_metadata,
+                            RootTOMLValue::String(&on[start..idx]),
+                        );
+                        if res {
+                            return Ok(idx + chr.len_utf8());
+                        }
+                        state = State::EndOfValue;
+                    } else if !*escaped && literal && chr == '\'' {
+                        let res = cb(
+                            key_chain,
+                            key_chain_metadata,
+                            RootTOMLValue::String(&on[start..idx]),
+                        );
                         if res {
                             return Ok(idx + chr.len_utf8());
                         }
@@ -470,7 +534,14 @@ pub mod value {
                     }
                 }
                 State::EndOfValue => {
-                    end_of_value(idx, chr, &mut state, key_chain, options.allow_comments)?;
+                    end_of_value(
+                        idx,
+                        chr,
+                        &mut state,
+                        key_chain,
+                        key_chain_metadata,
+                        options.allow_comments,
+                    )?;
 
                     if key_chain.len() == current_len {
                         return Ok(idx + chr.len_utf8());
@@ -529,12 +600,23 @@ pub mod value {
                 State::NumberValue { start } => {
                     // TODO actual number handing
                     if chr.is_whitespace() || matches!(chr, '}' | ',' | ']') {
-                        let res = cb(key_chain, split, RootTOMLValue::Number(&on[start..idx]));
+                        let res = cb(
+                            key_chain,
+                            key_chain_metadata,
+                            RootTOMLValue::Number(&on[start..idx]),
+                        );
                         if res {
                             return Ok(idx);
                         }
                         state = State::EndOfValue;
-                        end_of_value(idx, chr, &mut state, key_chain, options.allow_comments)?;
+                        end_of_value(
+                            idx,
+                            chr,
+                            &mut state,
+                            key_chain,
+                            key_chain_metadata,
+                            options.allow_comments,
+                        )?;
                     }
                 }
                 State::TrueFalseNull { start } => {
@@ -544,14 +626,15 @@ pub mod value {
                     } else if diff == 4 {
                         match &on[start..(idx + chr.len_utf8())] {
                             "true" => {
-                                let res = cb(key_chain, split, RootTOMLValue::Boolean(true));
+                                let res =
+                                    cb(key_chain, key_chain_metadata, RootTOMLValue::Boolean(true));
                                 if res {
                                     return Ok(idx + chr.len_utf8());
                                 }
                                 state = State::EndOfValue;
                             }
                             "null" => {
-                                let res = cb(key_chain, split, RootTOMLValue::Null);
+                                let res = cb(key_chain, key_chain_metadata, RootTOMLValue::Null);
                                 if res {
                                     return Ok(idx + chr.len_utf8());
                                 }
@@ -566,7 +649,7 @@ pub mod value {
                             }
                         }
                     } else if let "false" = &on[start..(idx + chr.len_utf8())] {
-                        let res = cb(key_chain, split, RootTOMLValue::Boolean(false));
+                        let res = cb(key_chain, key_chain_metadata, RootTOMLValue::Boolean(false));
                         if res {
                             return Ok(idx + chr.len_utf8());
                         }
@@ -618,7 +701,11 @@ pub mod value {
             }
             State::NumberValue { start } => {
                 // TODO actual number handing
-                let _result = cb(key_chain, split, RootTOMLValue::Number(&on[start..]));
+                let _result = cb(
+                    key_chain,
+                    key_chain_metadata,
+                    RootTOMLValue::Number(&on[start..]),
+                );
             }
             State::TrueFalseNull { start: _ } => {
                 return Err(TOMLParseError {
@@ -638,6 +725,7 @@ pub mod value {
         chr: char,
         state: &mut State,
         key_chain: &mut Vec<TOMLKey<'_>>,
+        key_chain_metadata: &mut Vec<TOMLKeyMetadata>,
         allow_comments: bool,
     ) -> Result<(), TOMLParseError> {
         if let ',' = chr {
@@ -668,11 +756,28 @@ pub mod value {
 
         if !chr.is_whitespace() {
             let mut popped = key_chain.pop();
-            while let Some(TOMLKey::Slice(_, Joined::Dot)) = popped {
+            let mut metadata = key_chain_metadata.pop();
+            while let (Some(TOMLKey::Slice(_)), Some(TOMLKeyMetadata(Joined::Dot, _))) =
+                (popped, metadata)
+            {
                 popped = key_chain.pop();
+                metadata = key_chain_metadata.pop();
             }
         }
 
         Ok(())
     }
+}
+
+#[must_use]
+pub fn matches(expecting: &[&str], chain: &[TOMLKey<'_>]) -> bool {
+    expecting.len() == chain.len()
+        && expecting
+            .iter()
+            .zip(chain.iter())
+            .all(|(lhs, rhs)| match rhs {
+                TOMLKey::Slice(rhs) => lhs == rhs,
+                // TODO
+                TOMLKey::Index(_) => false,
+            })
 }

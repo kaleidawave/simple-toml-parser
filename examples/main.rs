@@ -27,21 +27,54 @@ ip = "10.0.0.2"
 "#
     .trim_start();
 
-    let source = if let Some(path) = std::env::args().nth(1) {
+    let arg = std::env::args().nth(1);
+
+    if let Some("--interactive") = arg.as_deref() {
+        run_interactive();
+        return;
+    }
+
+    let source = if let Some("--content") = arg.as_deref() {
+        std::env::args().nth(2).expect("no content")
+    } else if let Some(path) = arg {
         std::fs::read_to_string(path).unwrap()
     } else {
         example.to_owned()
     };
 
-    // let second_arg = std::env::args().nth(2);
-    // let mode = second_arg
-    //     .and_then(|arg| {
-    //         matches!(arg.as_str(), "--verbose" | "--text").then_some(arg[2..].to_owned())
-    //     })
-    //     .unwrap_or_default();
-
-    parse_toml(&source, |keys, _, value| {
-        eprintln!("{keys:?} -> {value:?}");
+    parse_toml(&source, |keys, value| {
+        println!("{keys:?} -> {value:?}");
     })
     .unwrap();
+}
+
+fn run_interactive() {
+    use std::io::{stdin, BufRead};
+    let stdin = stdin();
+    let mut buf = Vec::new();
+
+    println!("start");
+
+    for line in stdin.lock().lines().map_while(Result::ok) {
+        if line == "close" {
+            if !buf.is_empty() {
+                eprintln!("no end to message {buf:?}");
+            }
+            break;
+        }
+
+        if line == "end" {
+            let output = String::from_utf8_lossy(&buf);
+            parse_toml(&output, |keys, value| {
+                println!("{keys:?} -> {value:?}");
+            })
+            .unwrap();
+            println!("end");
+            buf.clear();
+            continue;
+        }
+
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(b'\n');
+    }
 }
