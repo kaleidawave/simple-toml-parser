@@ -90,7 +90,7 @@ fn debug_keys(keys: &[TOMLKey<'_>], context: &TOMLKeyContext) {
         print!("}}");
     }
 
-    print!(" => ")
+    print!(" => ");
 }
 
 fn debug_value(value: RootTOMLValue<'_>) {

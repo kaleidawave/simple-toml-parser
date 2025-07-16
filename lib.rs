@@ -67,7 +67,7 @@ pub struct TOMLStringValue<'a> {
     literal: bool,
 }
 
-impl<'a> std::fmt::Debug for TOMLStringValue<'a> {
+impl std::fmt::Debug for TOMLStringValue<'_> {
     // Required method
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if self.literal {
@@ -79,14 +79,20 @@ impl<'a> std::fmt::Debug for TOMLStringValue<'a> {
 }
 
 impl<'a> TOMLStringValue<'a> {
+    #[must_use]
     pub fn is_literal(&self) -> bool {
         self.literal
     }
 
+    #[must_use]
     pub fn raw(&self) -> &'a str {
         self.on
     }
 
+    /// # Panics
+    ///
+    /// (temporarily) panics for some bad values
+    #[must_use]
     pub fn value(&self) -> std::borrow::Cow<'a, str> {
         if self.literal {
             std::borrow::Cow::Borrowed(self.on)
@@ -116,7 +122,8 @@ impl<'a> TOMLStringValue<'a> {
                         start = idx + 1;
                     }
                     Some('u') => {
-                        let after = self.on[idx..][2..].split_once(|chr: char| !chr.is_digit(16));
+                        let after =
+                            self.on[idx..][2..].split_once(|chr: char| !chr.is_ascii_hexdigit());
                         if let Some((after, _)) = after {
                             assert!(after.len() <= 4);
                             let mut unicode_code = 0u32;
@@ -264,20 +271,18 @@ impl<'a> KeyChain<'a> {
             } else if self.context.table_keys > 0 {
                 self.context.table_keys -= 1;
             }
-        } else {
-            if let Some(item) = self.context.object_keys.pop() {
-                (0..item).for_each(|_| {
-                    self.keys.pop();
-                });
-            } else if self.context.specifier_keys > 0 {
-                let offset = self.context.table_keys;
-                let range = offset as usize..(self.context.specifier_keys + offset) as usize;
-                self.keys.drain(range);
-                self.context.specifier_keys = 0;
-            } else if self.context.table_keys > 0 {
-                self.keys.clear();
-                self.context.table_keys = 0;
-            }
+        } else if let Some(item) = self.context.object_keys.pop() {
+            (0..item).for_each(|_| {
+                self.keys.pop();
+            });
+        } else if self.context.specifier_keys > 0 {
+            let offset = self.context.table_keys;
+            let range = offset as usize..(self.context.specifier_keys + offset) as usize;
+            self.keys.drain(range);
+            self.context.specifier_keys = 0;
+        } else if self.context.table_keys > 0 {
+            self.keys.clear();
+            self.context.table_keys = 0;
         }
     }
 
@@ -357,9 +362,7 @@ pub fn parse_with_exit_signal<'a>(
                     {
                         if let Context::ArrayOfTables = context {
                             let valid = chars.next().is_some_and(|(_, chr)| chr == ']');
-                            if !valid {
-                                panic!("TODO error")
-                            }
+                            assert!(valid, "TODO error");
                         }
                         let level = Level::Table;
                         let part = &on[start..idx];
@@ -371,7 +374,7 @@ pub fn parse_with_exit_signal<'a>(
                                 0
                             };
                             // Collect here
-                            let _ = key_chain.clear();
+                            let () = key_chain.clear();
                             let result = parse_key(part, level, &mut key_chain);
                             if let Err(()) = result {
                                 return Err(TOMLParseError {
@@ -461,22 +464,20 @@ fn parse_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>) -> R
                 in_string = None;
                 found = true;
             }
-        } else {
-            if let "." = matched {
-                let key = &part[last..idx].trim();
-                let key = TOMLKey::Slice(key);
-                match level {
-                    Level::Table => key_chain.push_table_key(key),
-                    Level::Specifier => key_chain.push_specifier_key(key),
-                    Level::Object => key_chain.push_object_key(key),
-                }
-                // joined = Joined::Dot;
-                found = true;
-                last = idx + 1;
-            } else {
-                assert!(part[..idx].trim_end().ends_with("."));
-                in_string = Some(matched);
+        } else if let "." = matched {
+            let key = &part[last..idx].trim();
+            let key = TOMLKey::Slice(key);
+            match level {
+                Level::Table => key_chain.push_table_key(key),
+                Level::Specifier => key_chain.push_specifier_key(key),
+                Level::Object => key_chain.push_object_key(key),
             }
+            // joined = Joined::Dot;
+            found = true;
+            last = idx + 1;
+        } else {
+            assert!(part[..idx].trim_end().ends_with('.'));
+            in_string = Some(matched);
         }
     }
 
@@ -576,14 +577,14 @@ pub mod value {
                         }
                         ']' => {
                             // TODO check
-                            let _ = key_chain.pop_whole_slice_key();
+                            let () = key_chain.pop_whole_slice_key();
                             State::EndOfValue
                         }
                         '{' => State::InObject,
                         '}' => {
                             let in_array =
                                 matches!(key_chain.keys.last(), Some(TOMLKey::Index(..)));
-                            let _context = key_chain.pop_whole_slice_key();
+                            key_chain.pop_whole_slice_key();
                             if in_array {
                                 State::ExpectingValue
                             } else {
@@ -917,7 +918,7 @@ pub mod value {
         Ok(None)
     }
 
-    /// Always pops from key_chain **unless** we are in an array.
+    /// Always pops from `key_chain` **unless** we are in an array.
     fn end_of_value(
         idx: usize,
         chr: char,
