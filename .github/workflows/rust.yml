@@ -54,7 +54,7 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - uses: kaleidawave/release-downloader@main
       with:
-        items: kaleidawave/experiements@assets[spectra]
+        items: kaleidawave/experiments@assets[spectra]
     - name: Run all tests
       run: cargo test --workspace --verbose --all-features
 
