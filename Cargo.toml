@@ -19,5 +19,11 @@ path = "lib.rs"
 [lints.clippy]
 pedantic = "deny"
 
+[[test]]
+name = "specification"
+harness = false
+
 [package.metadata.commands]
-spec = 'spectra check ./specification.md "./target/debug/examples/main --content {content}"' # --dry-run
+spectra = 'spectra check ./specification.md "./target/debug/examples/parse --rpc --interactive"'
+# specification_old = 'spectra check ./specification.md "./target/debug/examples/parse --content {content}"'
+# specification_2 = 'spectra check ./specification.md "./target/debug/examples/parse --interactive --rpc"' # --dry-run

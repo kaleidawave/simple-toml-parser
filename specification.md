@@ -5,7 +5,7 @@ title = "TOML Example"
 ```
 
 ```
-[Slice("title", Alone)] -> String("TOML Example")
+"title" => String("TOML Example")
 ```
 
 ### Table
@@ -16,7 +16,7 @@ name = "Tom Preston-Werner"
 ```
 
 ```
-[Slice("owner", Alone), Slice("name", Alone)] -> String("Tom Preston-Werner")
+["owner"] "name" => String("Tom Preston-Werner")
 ```
 
 ### Tables and inline tables
@@ -30,15 +30,15 @@ temp_targets = { cpu = 79.5, case = 72.0 }
 ```
 
 ```
-[Slice("database", Alone), Slice("enabled", Alone)] -> Boolean(true)
-[Slice("database", Alone), Slice("ports", Alone), Index(0)] -> Number("8000")
-[Slice("database", Alone), Slice("ports", Alone), Index(1)] -> Number("8001")
-[Slice("database", Alone), Slice("ports", Alone), Index(2)] -> Number("8002")
-[Slice("database", Alone), Slice("data", Alone), Index(0), Index(0)] -> String("delta")
-[Slice("database", Alone), Slice("data", Alone), Index(0), Index(1)] -> String("phi")
-[Slice("database", Alone), Slice("data", Alone), Index(1), Index(0)] -> Number("3.14")
-[Slice("database", Alone), Slice("temp_targets", Alone), Slice("cpu", Alone)] -> Number("79.5")
-[Slice("database", Alone), Slice("temp_targets", Alone), Slice("case", Alone)] -> Number("72.0")
+["database"] "enabled" => Boolean(true)
+["database"] "ports" {0} => Number("8000")
+["database"] "ports" {1} => Number("8001")
+["database"] "ports" {2} => Number("8002")
+["database"] "data" {0} {0} => String("delta")
+["database"] "data" {0} {1} => String("phi")
+["database"] "data" {1} {0} => Number("3.14")
+["database"] "temp_targets" {"cpu"} => Number("79.5")
+["database"] "temp_targets" {"case"} => Number("72.0")
 ```
 
 ### Dot 
@@ -50,8 +50,8 @@ role = "frontend"
 ```
 
 ```
-[Slice("servers", Alone), Slice("alpha", Dot), Slice("ip", Alone)] -> String("10.0.0.1")
-[Slice("servers", Alone), Slice("alpha", Dot), Slice("role", Alone)] -> String("frontend")
+["servers"."alpha"] "ip" => String("10.0.0.1")
+["servers"."alpha"] "role" => String("frontend")
 ```
 
 ### Empty keys
@@ -63,7 +63,7 @@ role = "frontend"
 ```
 
 ```
-...
+Error: TOMLParseError { at: 0, reason: ExpectedKey }
 ```
 
 ### Dotted keys
@@ -76,10 +76,10 @@ site."google.com" = true
 ```
 
 ```
-[Slice("name", Alone)] -> String("Orange")
-[Slice("physical", Alone), Slice("color", Dot)] -> String("orange")
-[Slice("physical", Alone), Slice("shape", Dot)] -> String("round")
-[Slice("site", Alone), Slice("google.com", Dot)] -> Boolean(true)
+"name" => String("Orange")
+"physical"."color" => String("orange")
+"physical"."shape" => String("round")
+"site"."google.com" => Boolean(true)
 ```
 
 ### Whitespace in keys
@@ -91,9 +91,9 @@ fruit . flavor = "banana"   # same as fruit.flavor
 ```
 
 ```
-[Slice("fruit", Alone), Slice("name", Dot)] -> String("banana")
-[Slice("fruit", Alone), Slice("color", Dot)] -> String("yellow")
-[Slice("fruit", Alone), Slice("flavor", Dot)] -> String("banana")
+"fruit"."name" => String("banana")
+"fruit"."color" => String("yellow")
+"fruit"."flavor" => String("banana")
 ```
 
 ### String keys
@@ -103,7 +103,7 @@ str = "I'm a string. \"You can quote me\". Name\tJos\u00E9\nLocation\tSF."
 ```
 
 ```
-...
+"str" => String("I'm a string. \"You can quote me\". Name\tJosé\nLocation\tSF.")
 ```
 
 ## Strings
@@ -111,13 +111,13 @@ str = "I'm a string. \"You can quote me\". Name\tJos\u00E9\nLocation\tSF."
 ### Multiline strings
 
 ```toml
-str1 = """
+str = """
 Roses are red
 Violets are blue"""
 ```
 
 ```
-...
+"str" => String("Roses are red\nViolets are blue")
 ```
 
 ### Multiline strings (with new line stuff)
@@ -140,7 +140,9 @@ str3 = """\
 ```
 
 ```
-...
+"str1" => String("The quick brown fox jumps over the lazy dog.")
+"str2" => String("The quick brown fox jumps over the lazy dog.")
+"str3" => String("The quick brown fox jumps over the lazy dog.")
 ```
 
 ### Quotation marks
@@ -156,13 +158,15 @@ str7 = """"This," she said, "is just a pointless statement.""""
 ```
 
 ```
-...
+"str4" => String("Here are two quotation marks: \"\". Simple enough.")
+"str5" => String("Here are three quotation marks: \"\"\".")
+"str6" => String("Here are fifteen quotation marks: \"\"\"\"\"\"\"\"\"\"\"\"\"\"\".")
+"str7" => String("\"This,\" she said, \"is just a pointless statement.\"")
 ```
 
 ### Literal strings
 
 ```toml
-# What you see is what you get.
 winpath  = 'C:\Users\nodejs\templates'
 winpath2 = '\\ServerX\admin$\system32\'
 quoted   = 'Tom "Dubs" Preston-Werner'
@@ -170,14 +174,17 @@ regex    = '<\i\c*\s*>'
 ```
 
 ```
-...
+"winpath" => String('C:\Users\nodejs\templates')
+"winpath2" => String('\\ServerX\admin$\system32\')
+"quoted" => String('Tom "Dubs" Preston-Werner')
+"regex" => String('<\i\c*\s*>')
 ```
 
 ### Literal strings (multiline)
 
 ```toml
-regex2 = '''I [dw]on't need \d{2} apples'''
-lines  = '''
+str1 = '''I [dw]on't need \d{2} apples'''
+str2 = '''
 The first newline is
 trimmed in raw strings.
    All other whitespace
@@ -186,7 +193,8 @@ trimmed in raw strings.
 ```
 
 ```
-...
+"str1" => String('I [dw]on't need \d{2} apples')
+"str2" => String('The first newline is\ntrimmed in raw strings.\n   All other whitespace\n   is preserved.\n')
 ```
 
 ## Tables
@@ -199,5 +207,5 @@ type.name = "pug"
 ```
 
 ```
-...
+["dog"."tater.man"] "type"."name" => String("pug")
 ```

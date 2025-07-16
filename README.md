@@ -1,12 +1,19 @@
-> [!CAUTION]
-> Work in progress
+# TOML parser/lexer
 
-A parser for TOML syntax. Uses a callback approach to avoid allocations
+[![crates.io badge](https://img.shields.io/crates/v/simple-toml-parser?style=flat-square)](https://crates.io/crates/simple-toml-parser)
+[![docs.rs badge](https://img.shields.io/docsrs/simple-toml-parser?style=flat-square)](https://docs.rs/simple-toml-parser/latest)
 
-- <https://toml.io/en/v1.0.0>
+Features
+- Under < 1k LOC Rust lexer (+ no dependencies)
+
+See examples and tests for usage.
 
 ### Testing
 
 ```sh
-spectra check ./specification.md "./target/debug/examples/main --content {content}"
+spectra check ./specification.md "./target/debug/examples/parse --rpc --interactive"
 ```
+
+### Links
+
+- <https://toml.io/en/v1.0.0>

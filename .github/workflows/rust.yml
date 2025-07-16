@@ -37,6 +37,8 @@ jobs:
       with:
         packages: taplo-cli
     - name: Check TOML formatting with taplo
+    # TODO replace with own tool
+      if: false 
       run: |
         taplo fmt --check **/*/Cargo.toml
 
@@ -49,6 +51,9 @@ jobs:
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - uses: kaleidawave/release-downloader@main
+      with:
+        items: kaleidawave/experiements@assets[spectra]
     - name: Run all tests
       run: cargo test --workspace --verbose --all-features
 
@@ -66,7 +71,8 @@ jobs:
 
   publish-ability:
     runs-on: ubuntu-latest
-    if: false
+    # TODO replace with own tool
+    if: false 
     steps:
     - uses: actions/checkout@v4
     - name: Check that it will publish to crates
