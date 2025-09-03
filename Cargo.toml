@@ -1,12 +1,12 @@
 [package]
 name = "simple-toml-parser"
-version = "0.0.0"
-edition = "2021"
 description = "No allocation TOML key value parser with comment support"
 authors = ["Ben <kaleidawave@gmail.com>"]
+version = "0.0.0"
+edition = "2024"
 license = "MIT"
-keywords = ["toml"]
 categories = ["parser-implementations"]
+keywords = ["toml"]
 repository = "https://github.com/kaleidawave/simple-toml-parser"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,6 +24,7 @@ name = "specification"
 harness = false
 
 [package.metadata.commands]
+spectra_dev = 'spectra check ./specification.md "cargo run --example parse -q -- --rpc --interactive"'
 spectra = 'spectra check ./specification.md "./target/debug/examples/parse --rpc --interactive"'
 # specification_old = 'spectra check ./specification.md "./target/debug/examples/parse --content {content}"'
 # specification_2 = 'spectra check ./specification.md "./target/debug/examples/parse --interactive --rpc"' # --dry-run

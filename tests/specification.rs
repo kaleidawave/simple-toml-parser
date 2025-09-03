@@ -2,7 +2,7 @@ fn main() -> std::process::ExitCode {
     let output = std::process::Command::new("spectra")
         .arg("check")
         .arg("./specification.md")
-        .arg("./target/debug/examples/parse --rpc --interactive")
+        .arg("cargo run --example parse -q -- --rpc --interactive")
         .status()
         .unwrap();
 

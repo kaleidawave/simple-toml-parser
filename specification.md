@@ -31,14 +31,14 @@ temp_targets = { cpu = 79.5, case = 72.0 }
 
 ```
 ["database"] "enabled" => Boolean(true)
-["database"] "ports" {0} => Number("8000")
-["database"] "ports" {1} => Number("8001")
-["database"] "ports" {2} => Number("8002")
+["database"] "ports" {0} => Number(8000)
+["database"] "ports" {1} => Number(8001)
+["database"] "ports" {2} => Number(8002)
 ["database"] "data" {0} {0} => String("delta")
 ["database"] "data" {0} {1} => String("phi")
-["database"] "data" {1} {0} => Number("3.14")
-["database"] "temp_targets" {"cpu"} => Number("79.5")
-["database"] "temp_targets" {"case"} => Number("72.0")
+["database"] "data" {1} {0} => Number(3.14)
+["database"] "temp_targets" {"cpu"} => Number(79.5)
+["database"] "temp_targets" {"case"} => Number(72.0)
 ```
 
 ### Dot 
@@ -209,3 +209,122 @@ type.name = "pug"
 ```
 ["dog"."tater.man"] "type"."name" => String("pug")
 ```
+
+## Formatting
+
+### Format keys
+
+> Whitespace of adjacent keys removed, whitespace around `=`
+
+```toml
+format
+---
+key1="hi"
+
+key2 =  "value"
+```
+
+```toml
+key1 = "hi"
+key2 = "value"
+```
+
+### Format tables
+
+> Each table has keys directly after with trailing new line
+
+```toml
+format
+---
+[table1]
+
+key1 = 1
+[table2]
+key2 = 2
+```
+
+```toml
+[table1]
+key1 = 1
+
+[table2]
+key2 = 2
+```
+
+### Comments retained
+
+> Comments have three modes: on line, annotating next line or standalone
+
+```toml
+format
+---
+[table]
+key1 = "hi" # comment here
+
+# comment about key2
+key2 = "test"
+
+# general comment
+
+key3 = "hi"
+```
+
+```toml
+[table]
+key1 = "hi" # comment here
+
+# comment about key2
+key2 = "test"
+
+# general comment
+
+key3 = "hi"
+```
+
+### Formatting array literals
+
+```toml
+format
+---
+a = [1, 2,
+3]
+```
+
+```toml
+a = [1, 2, 3]
+```
+
+### Formatting nested array literals
+
+```toml
+format
+---
+a = [
+  [1, 2, 3],
+  [4, 5, 6]
+]
+```
+
+> TODO should be two lines
+
+```toml
+a = [[1, 2, 3], [4, 5, 6]]
+```
+
+### Formatting object literals
+
+```toml
+format
+---
+obj1 = { name = "value", 
+version = "0.5.1" }
+ob2 = { name = "x", nested = {
+
+data = "12323" }, version="1.6.2" }
+```
+
+```toml
+obj1 = { name = "value", version = "0.5.1" }
+ob2 = { name = "x", nested = { data = "12323" }, version = "1.6.2" }
+```
+

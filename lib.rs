@@ -1,4 +1,23 @@
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub mod formatting;
+pub mod utilities;
+
+use utilities::KeyChain;
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct TOMLKeyContext {
+    pub table_keys: u8,
+    pub specifier_keys: u8,
+    // later keys get posted here
+    pub object_keys: Vec<u8>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TOMLParseOptions {
+    pub disallow_comments: bool,
+    pub yield_comments: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TOMLKey<'a> {
     Slice(&'a str),
     Index(usize),
@@ -15,35 +34,6 @@ impl TOMLKey<'_> {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct TOMLKeyContext {
-    pub table_keys: u8,
-    pub specifier_keys: u8,
-    // later keys get posted here
-    pub object_keys: Vec<u8>,
-}
-
-impl TOMLKeyContext {
-    #[must_use]
-    pub fn split_keys<'a, 'b>(
-        &'a self,
-        on: &'b [TOMLKey<'a>],
-    ) -> (
-        &'b [TOMLKey<'a>],
-        &'b [TOMLKey<'a>],
-        Partition<'b, TOMLKey<'a>>,
-    ) {
-        (
-            &on[..self.table_keys as usize],
-            &on[self.table_keys as usize..][..self.specifier_keys as usize],
-            Partition::new(
-                &on[self.table_keys as usize..][self.specifier_keys as usize..],
-                &self.object_keys,
-            ),
-        )
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Level {
     Table,
@@ -52,116 +42,31 @@ pub enum Level {
     Object,
 }
 
-#[derive(Debug, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum CommentPosition {
+    AtEnd,
+    AnnotatingNext,
+    Standalone,
+}
+
+#[derive(Debug, PartialEq, Hash, Clone, Copy)]
 pub enum RootTOMLValue<'a> {
     String(TOMLStringValue<'a>),
-    Number(&'a str),
+    Number(TOMLNumberValue<'a>),
     Boolean(bool),
+    Comment(&'a str, CommentPosition),
     Null,
 }
 
 /// Last is literal
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TOMLStringValue<'a> {
     on: &'a str,
     literal: bool,
 }
 
-impl std::fmt::Debug for TOMLStringValue<'_> {
-    // Required method
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        if self.literal {
-            write!(f, "'{value}'", value = self.on)
-        } else {
-            write!(f, "{value:?}", value = self.on)
-        }
-    }
-}
-
-impl<'a> TOMLStringValue<'a> {
-    #[must_use]
-    pub fn is_literal(&self) -> bool {
-        self.literal
-    }
-
-    #[must_use]
-    pub fn raw(&self) -> &'a str {
-        self.on
-    }
-
-    /// # Panics
-    ///
-    /// (temporarily) panics for some bad values
-    #[must_use]
-    pub fn value(&self) -> std::borrow::Cow<'a, str> {
-        if self.literal {
-            std::borrow::Cow::Borrowed(self.on)
-        } else {
-            let mut start = 0;
-            let mut value = std::borrow::Cow::Borrowed("");
-            for (idx, _matched) in self.on.match_indices('\\') {
-                value += std::borrow::Cow::Borrowed(&self.on[start..idx]);
-                match self.on[idx..].chars().nth(1) {
-                    Some('\r' | '\n') => {
-                        let after = &self.on[(idx + 1)..];
-                        start = idx + 1 + (after.len() - after.trim_start().len());
-                    }
-                    Some('n') => {
-                        value += std::borrow::Cow::Borrowed("\n");
-                        start = idx + 2;
-                    }
-                    Some('r') => {
-                        value += std::borrow::Cow::Borrowed("\r");
-                        start = idx + 2;
-                    }
-                    Some('t') => {
-                        value += std::borrow::Cow::Borrowed("\t");
-                        start = idx + 2;
-                    }
-                    Some('"') => {
-                        start = idx + 1;
-                    }
-                    Some('u') => {
-                        let after =
-                            self.on[idx..][2..].split_once(|chr: char| !chr.is_ascii_hexdigit());
-                        if let Some((after, _)) = after {
-                            assert!(after.len() <= 4);
-                            let mut unicode_code = 0u32;
-                            for byte in after.as_bytes() {
-                                unicode_code <<= 4; // 16=2^4
-                                match byte {
-                                    b'0'..=b'9' => {
-                                        unicode_code += u32::from(byte - b'0');
-                                    }
-                                    b'a'..=b'f' => {
-                                        unicode_code += u32::from(byte - b'a') + 10;
-                                    }
-                                    b'A'..=b'F' => {
-                                        unicode_code += u32::from(byte - b'A') + 10;
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                            if let Some(chr) = char::from_u32(unicode_code) {
-                                value.to_mut().push(chr);
-                            } else {
-                                eprintln!("bad code {after}");
-                            }
-                            start = idx + 2 + after.len();
-                        } else {
-                            eprintln!("bad char");
-                        }
-                    }
-                    chr => {
-                        eprintln!("bad char {chr:?}");
-                    }
-                }
-            }
-            value += std::borrow::Cow::Borrowed(&self.on[start..]);
-            value
-        }
-    }
-}
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct TOMLNumberValue<'a>(pub(crate) &'a str);
 
 #[derive(Default, Debug)]
 pub struct KeyState {
@@ -200,7 +105,7 @@ impl std::fmt::Display for TOMLParseError {
     }
 }
 
-/// If you want to return early (not parse the whole input) use [`parse_with_exit_signal`]
+/// If you want to return early (not parse the whole input) use [`parse_with_options`]
 /// and that contains more information about keys
 ///
 /// # Errors
@@ -209,7 +114,7 @@ pub fn parse<'a>(
     on: &'a str,
     mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], RootTOMLValue<'a>),
 ) -> Result<(), TOMLParseError> {
-    parse_with_exit_signal(on, |k, _m, v| {
+    parse_with_options(on, TOMLParseOptions::default(), |k, _m, v| {
         cb(k, v);
         false
     })
@@ -229,83 +134,15 @@ enum State {
     InKey { state: KeyState, context: Context },
 }
 
-#[derive(Debug)]
-struct KeyChain<'a> {
-    pub keys: Vec<TOMLKey<'a>>,
-    pub context: TOMLKeyContext,
-}
-
-impl<'a> KeyChain<'a> {
-    pub fn new() -> Self {
-        Self {
-            keys: Vec::new(),
-            context: TOMLKeyContext::default(),
-        }
-    }
-
-    pub fn push_table_key(&mut self, key: TOMLKey<'a>) {
-        self.keys.push(key);
-        self.context.table_keys += 1;
-    }
-
-    pub fn push_specifier_key(&mut self, key: TOMLKey<'a>) {
-        self.keys.push(key);
-        self.context.specifier_keys += 1;
-    }
-
-    pub fn push_object_key(&mut self, key: TOMLKey<'a>) {
-        self.keys.push(key);
-        // TODO length
-        self.context.object_keys.push(1);
-    }
-
-    pub fn pop_whole_slice_key(&mut self) {
-        // TODO temp
-        let is_index = matches!(self.keys.last(), Some(TOMLKey::Index(_)));
-        if is_index {
-            let _ = self.keys.pop();
-            if !self.context.object_keys.is_empty() {
-                self.context.object_keys.pop();
-            } else if self.context.specifier_keys > 0 {
-                self.context.specifier_keys -= 1;
-            } else if self.context.table_keys > 0 {
-                self.context.table_keys -= 1;
-            }
-        } else if let Some(item) = self.context.object_keys.pop() {
-            (0..item).for_each(|_| {
-                self.keys.pop();
-            });
-        } else if self.context.specifier_keys > 0 {
-            let offset = self.context.table_keys;
-            let range = offset as usize..(self.context.specifier_keys + offset) as usize;
-            self.keys.drain(range);
-            self.context.specifier_keys = 0;
-        } else if self.context.table_keys > 0 {
-            self.keys.clear();
-            self.context.table_keys = 0;
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.keys.clear();
-        self.context.object_keys.clear();
-        self.context.specifier_keys = 0;
-        self.context.table_keys = 0;
-    }
-
-    pub fn in_object(&self) -> bool {
-        !self.context.object_keys.is_empty()
-    }
-}
-
 /// # Errors
 /// Returns an error if it tries to parse invalid TOML input
 ///
 /// # Panics
 /// On unimplemented items
 #[allow(clippy::too_many_lines)]
-pub fn parse_with_exit_signal<'a>(
+pub fn parse_with_options<'a>(
     on: &'a str,
+    options: TOMLParseOptions,
     mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b TOMLKeyContext, RootTOMLValue<'a>) -> bool,
 ) -> Result<(), TOMLParseError> {
     let mut key_chain = KeyChain::new();
@@ -334,6 +171,7 @@ pub fn parse_with_exit_signal<'a>(
                         };
                     }
                     '#' => {
+                        start = idx + 1;
                         state = State::InComment;
                     }
                     chr => {
@@ -407,10 +245,11 @@ pub fn parse_with_exit_signal<'a>(
                             });
                         }
 
-                        let result = value::parse_with_exit_signal_chars(
+                        let result = value::parse_with_options_chars(
                             on,
                             &mut chars,
                             &mut key_chain,
+                            options,
                             &mut cb,
                         );
 
@@ -435,6 +274,30 @@ pub fn parse_with_exit_signal<'a>(
             }
             State::InComment => {
                 if let '\n' = chr {
+                    if options.yield_comments {
+                        let comment = on[start..idx].trim();
+                        let kind = if on[..start - 1]
+                            .rsplit_once('\n')
+                            .is_some_and(|(_, line)| !line.trim().is_empty())
+                        {
+                            CommentPosition::AtEnd
+                        } else if let Some((_, line)) = on[idx + 1..].split_once('\n')
+                            && let Some((between, _)) = line.split_once('\n')
+                            && between.trim().is_empty()
+                        {
+                            CommentPosition::AnnotatingNext
+                        } else {
+                            CommentPosition::Standalone
+                        };
+                        let result = cb(
+                            &key_chain.keys,
+                            &key_chain.context,
+                            RootTOMLValue::Comment(comment, kind),
+                        );
+                        if result {
+                            return Ok(());
+                        }
+                    }
                     state = State::StartOfLine;
                 }
             }
@@ -500,8 +363,8 @@ fn parse_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>) -> R
 
 pub mod value {
     use super::{
-        KeyChain, KeyState, RootTOMLValue, TOMLKey, TOMLKeyContext, TOMLParseError,
-        TOMLParseErrorReason, TOMLStringValue,
+        KeyChain, KeyState, RootTOMLValue, TOMLKey, TOMLKeyContext, TOMLNumberValue,
+        TOMLParseError, TOMLParseErrorReason, TOMLParseOptions, TOMLStringValue,
     };
 
     #[derive(Debug)]
@@ -536,33 +399,26 @@ pub mod value {
 
     /// # Errors
     /// errors on invalid TOML syntax
-    pub fn parse_with_exit_signal<'a>(
+    pub fn parse_with_options<'a>(
         on: &'a str,
+        options: TOMLParseOptions,
         mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b TOMLKeyContext, RootTOMLValue<'a>) -> bool,
     ) -> Result<Option<usize>, TOMLParseError> {
         let mut chars = on.char_indices();
         let mut key_chain = KeyChain::new();
-        parse_with_exit_signal_chars(on, &mut chars, &mut key_chain, &mut cb)
+        parse_with_options_chars(on, &mut chars, &mut key_chain, options, &mut cb)
     }
 
     /// TODO: `allow_comments` fix
     /// Returns Some if finished early
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn parse_with_exit_signal_chars<'a>(
+    pub(crate) fn parse_with_options_chars<'a>(
         on: &'a str,
         chars: &mut std::str::CharIndices<'a>,
         key_chain: &mut KeyChain<'a>,
+        options: TOMLParseOptions,
         cb: &mut impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b TOMLKeyContext, RootTOMLValue<'a>) -> bool,
     ) -> Result<Option<usize>, TOMLParseError> {
-        // Temp fix
-        struct Options {
-            pub allow_comments: bool,
-        }
-
-        let options = Options {
-            allow_comments: false,
-        };
-
         let mut state = State::ExpectingValue;
 
         let current_len = key_chain.keys.len();
@@ -627,7 +483,7 @@ pub mod value {
                                 multiline,
                             }
                         }
-                        c @ ('/' | '#') if options.allow_comments => State::Comment {
+                        c @ ('/' | '#') if !options.disallow_comments => State::Comment {
                             last_was_asterisk: false,
                             start: idx,
                             multiline: false,
@@ -725,7 +581,7 @@ pub mod value {
                     }
                 }
                 State::EndOfValue => {
-                    end_of_value(idx, chr, &mut state, key_chain, options.allow_comments)?;
+                    end_of_value(idx, chr, &mut state, key_chain, !options.disallow_comments)?;
 
                     // dbg!(key_chain.keys.len(), current_len, &state);
                     let r#return = key_chain.keys.len() == current_len
@@ -766,12 +622,12 @@ pub mod value {
                 State::InObject => {
                     if chr == '}' {
                         state = State::EndOfValue;
-                    } else if let (true, c @ ('/' | '#')) = (options.allow_comments, chr) {
+                    } else if let ('/' | '#', false) = (chr, options.disallow_comments) {
                         state = State::Comment {
                             last_was_asterisk: false,
                             start: idx,
                             multiline: false,
-                            hash: c == '#',
+                            hash: chr == '#',
                         };
                     } else if chr.is_alphabetic() {
                         state = State::InKey {
@@ -791,13 +647,13 @@ pub mod value {
                         let result = cb(
                             &key_chain.keys,
                             &key_chain.context,
-                            RootTOMLValue::Number(&on[start..idx]),
+                            RootTOMLValue::Number(TOMLNumberValue(&on[start..idx])),
                         );
                         if result {
                             return Ok(Some(idx));
                         }
                         state = State::EndOfValue;
-                        end_of_value(idx, chr, &mut state, key_chain, options.allow_comments)?;
+                        end_of_value(idx, chr, &mut state, key_chain, !options.disallow_comments)?;
 
                         let r#return = key_chain.keys.len() == current_len
                             && !matches!(state, State::InObject)
@@ -838,7 +694,7 @@ pub mod value {
                                 return Err(TOMLParseError {
                                     at: idx,
                                     reason: TOMLParseErrorReason::ExpectedTrueFalseNull,
-                                })
+                                });
                             }
                         }
                     } else if let "false" = &on[start..(idx + chr.len_utf8())] {
@@ -866,7 +722,7 @@ pub mod value {
                 return Err(TOMLParseError {
                     at: on.len(),
                     reason: TOMLParseErrorReason::ExpectedQuote,
-                })
+                });
             }
             State::Equal => {
                 return Err(TOMLParseError {
@@ -901,7 +757,7 @@ pub mod value {
                 let result = cb(
                     &key_chain.keys,
                     &key_chain.context,
-                    RootTOMLValue::Number(&on[start..]),
+                    RootTOMLValue::Number(TOMLNumberValue(&on[start..])),
                 );
                 if result {
                     return Ok(Some(on.len()));
@@ -911,7 +767,7 @@ pub mod value {
                 return Err(TOMLParseError {
                     at: on.len(),
                     reason: TOMLParseErrorReason::ExpectedTrueFalseNull,
-                })
+                });
             }
         }
 
@@ -966,41 +822,5 @@ pub mod value {
         } else {
             Ok(())
         }
-    }
-}
-
-#[must_use]
-pub fn matches(expecting: &[&str], chain: &[TOMLKey<'_>]) -> bool {
-    expecting.len() == chain.len()
-        && expecting
-            .iter()
-            .zip(chain.iter())
-            .all(|(lhs, rhs)| match rhs {
-                TOMLKey::Slice(rhs) => lhs == rhs,
-                // TODO
-                TOMLKey::Index(_) => false,
-            })
-}
-
-pub struct Partition<'a, T> {
-    on: &'a [T],
-    points: &'a [u8],
-}
-
-impl<'a, T> Partition<'a, T> {
-    pub fn new(on: &'a [T], points: &'a [u8]) -> Self {
-        Self { on, points }
-    }
-}
-
-impl<'a, T> Iterator for Partition<'a, T> {
-    type Item = &'a [T];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let split = self.points.first()?;
-        self.points = &self.points[1..];
-        let (items, rest) = self.on.split_at(*split as usize);
-        self.on = rest;
-        Some(items)
     }
 }

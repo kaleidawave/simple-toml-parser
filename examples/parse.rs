@@ -1,5 +1,5 @@
 use simple_toml_parser::{
-    parse_with_exit_signal as parse_toml, RootTOMLValue, TOMLKey, TOMLKeyContext,
+    RootTOMLValue, TOMLKey, TOMLKeyContext, parse_with_options as parse_toml,
 };
 
 static EXAMPLE: &str = r#"
@@ -43,12 +43,8 @@ fn main() {
         EXAMPLE.trim_start().to_owned()
     };
 
-    // parse_toml(&source, |keys, context, _value| {
-    //     println!("{keys:?} {context:?}");
-    //     false
-    // }).unwrap();
-
-    parse_toml(&source, |keys, context, value| {
+    let options = Default::default();
+    parse_toml(&source, options, |keys, context, value| {
         debug_keys(keys, context);
         debug_value(value);
         false
@@ -84,7 +80,7 @@ fn debug_keys(keys: &[TOMLKey<'_>], context: &TOMLKeyContext) {
         debug_keys_(specifier_keys);
     }
 
-    for keys in object_keys {
+    for keys in object_keys.iter() {
         print!(" {{");
         debug_keys_(keys);
         print!("}}");
@@ -128,7 +124,7 @@ fn debug_value(value: RootTOMLValue<'_>) {
 }
 
 fn run_interactive() {
-    use std::io::{stdin, BufRead};
+    use std::io::{BufRead, stdin};
     let stdin = stdin();
     let mut buf = Vec::new();
 
@@ -143,15 +139,26 @@ fn run_interactive() {
         }
 
         if line == "end" {
-            let output = String::from_utf8_lossy(&buf);
-            // println!("{output}");
-            let out = parse_toml(&output, |keys, context, value| {
-                debug_keys(keys, context);
-                debug_value(value);
-                false
-            });
-            if let Err(error) = out {
-                println!("Error: {error:?}");
+            let source = String::from_utf8_lossy(&buf);
+            if let Some(rest) = source.strip_prefix("format") {
+                use simple_toml_parser::formatting::{FormatOptions, format_toml};
+
+                let (_, after) = rest.split_once("---").unwrap();
+                let source = after.trim();
+                // TODO indentation and others here
+                let options = FormatOptions::default();
+                let out = format_toml(&source, &options).expect("invalid input to format");
+                println!("{out}");
+            } else {
+                let options = Default::default();
+                let out = parse_toml(&source, options, |keys, context, value| {
+                    debug_keys(keys, context);
+                    debug_value(value);
+                    false
+                });
+                if let Err(error) = out {
+                    println!("Error: {error:?}");
+                }
             }
             println!("end");
             buf.clear();
