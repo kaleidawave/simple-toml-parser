@@ -120,7 +120,7 @@ Violets are blue"""
 "str" => String("Roses are red\nViolets are blue")
 ```
 
-### Multiline strings (with new line stuff)
+### Multiline strings (with new lines)
 
 ```toml
 str1 = "The quick brown fox jumps over the lazy dog."
@@ -129,14 +129,14 @@ str2 = """
 The quick brown \
 
 
-  fox jumps over \
-    the lazy dog."""
+	fox jumps over \
+		the lazy dog."""
 
 str3 = """\
-       The quick brown \
-       fox jumps over \
-       the lazy dog.\
-       """
+	The quick brown \
+		fox jumps over \
+			the lazy dog.\
+		"""
 ```
 
 ```
@@ -187,14 +187,14 @@ str1 = '''I [dw]on't need \d{2} apples'''
 str2 = '''
 The first newline is
 trimmed in raw strings.
-   All other whitespace
-   is preserved.
+ All other whitespace
+	 is preserved.
 '''
 ```
 
 ```
 "str1" => String('I [dw]on't need \d{2} apples')
-"str2" => String('The first newline is\ntrimmed in raw strings.\n   All other whitespace\n   is preserved.\n')
+"str2" => String('The first newline is\ntrimmed in raw strings.\n All other whitespace\n\t is preserved.\n')
 ```
 
 ## Tables
@@ -291,7 +291,11 @@ a = [1, 2,
 ```
 
 ```toml
-a = [1, 2, 3]
+a = [
+	1,
+	2,
+	3
+]
 ```
 
 ### Formatting nested array literals
@@ -299,16 +303,22 @@ a = [1, 2, 3]
 ```toml
 format
 ---
-a = [
-  [1, 2, 3],
-  [4, 5, 6]
-]
+a = [[1, 2, 3], [4, 5,6]]
 ```
 
-> TODO should be two lines
-
 ```toml
-a = [[1, 2, 3], [4, 5, 6]]
+a = [
+	[
+		1,
+		2,
+		3
+	],
+	[
+		4,
+		5,
+		6
+	]
+]
 ```
 
 ### Formatting object literals
@@ -318,13 +328,110 @@ format
 ---
 obj1 = { name = "value", 
 version = "0.5.1" }
-ob2 = { name = "x", nested = {
+obj2 = { name = "x", nested = {
 
 data = "12323" }, version="1.6.2" }
 ```
 
 ```toml
 obj1 = { name = "value", version = "0.5.1" }
-ob2 = { name = "x", nested = { data = "12323" }, version = "1.6.2" }
+obj2 = {
+	name = "x",
+	nested = { data = "12323" },
+	version = "1.6.2"
+}
 ```
 
+### Object of arrays
+
+```toml
+format
+---
+object_array = { a = [1], b = [2, 3, 4], c = [5] }
+```
+
+```toml
+object_array = {
+	a = [1],
+	b = [
+		2,
+		3,
+		4
+	],
+	c = [5]
+}
+```
+
+### Array of objects
+
+```toml
+format
+---
+array_object = [{a = 1}, { b = 2, c = 3, d = 4 }]
+```
+
+```toml
+array_object = [
+	{ a = 1 },
+	{
+		b = 2,
+		c = 3,
+		d = 4
+	}
+]
+```
+
+### Deeply nested array
+
+```toml
+format
+---
+aaaaa = [[[[[1]]]]]
+```
+
+```toml
+aaaaa = [
+	[
+		[
+			[
+				[1]
+			]
+		]
+	]
+]
+```
+
+### Deeply nested object
+
+```toml
+format
+---
+ooooo = { a = { b = { c = { d = { e = 1 } } } } }
+```
+
+```toml
+ooooo = {
+	a = {
+		b = {
+			c = {
+				d = { e = 1 }
+			}
+		}
+	}
+}
+```
+
+### Nested comments
+
+```toml
+format
+---
+object = {a = 1 # hi
+     }
+```
+
+```toml
+object = {
+	a = 1 # hi
+}
+```

@@ -1,6 +1,4 @@
-use simple_toml_parser::{
-    RootTOMLValue, TOMLKey, TOMLKeyContext, parse_with_options as parse_toml,
-};
+use simple_toml_parser::{RootTOMLValue, TOMLKey, TOMLKeyContext, parse_toml_with_options};
 
 static EXAMPLE: &str = r#"
 # This is a TOML document
@@ -44,7 +42,7 @@ fn main() {
     };
 
     let options = Default::default();
-    parse_toml(&source, options, |keys, context, value| {
+    parse_toml_with_options(&source, options, |keys, context, value| {
         debug_keys(keys, context);
         debug_value(value);
         false
@@ -151,7 +149,7 @@ fn run_interactive() {
                 println!("{out}");
             } else {
                 let options = Default::default();
-                let out = parse_toml(&source, options, |keys, context, value| {
+                let out = parse_toml_with_options(&source, options, |keys, context, value| {
                     debug_keys(keys, context);
                     debug_value(value);
                     false

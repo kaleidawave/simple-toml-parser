@@ -42,19 +42,12 @@ pub enum Level {
     Object,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum CommentPosition {
-    AtEnd,
-    AnnotatingNext,
-    Standalone,
-}
-
 #[derive(Debug, PartialEq, Hash, Clone, Copy)]
 pub enum RootTOMLValue<'a> {
     String(TOMLStringValue<'a>),
     Number(TOMLNumberValue<'a>),
     Boolean(bool),
-    Comment(&'a str, CommentPosition),
+    Comment(&'a str),
     Null,
 }
 
@@ -105,16 +98,16 @@ impl std::fmt::Display for TOMLParseError {
     }
 }
 
-/// If you want to return early (not parse the whole input) use [`parse_with_options`]
+/// If you want to return early (not parse the whole input) use [`parse_toml_with_options`]
 /// and that contains more information about keys
 ///
 /// # Errors
 /// Returns an error if it tries to parse invalid TOML input
-pub fn parse<'a>(
+pub fn parse_toml<'a>(
     on: &'a str,
     mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], RootTOMLValue<'a>),
 ) -> Result<(), TOMLParseError> {
-    parse_with_options(on, TOMLParseOptions::default(), |k, _m, v| {
+    parse_toml_with_options(on, TOMLParseOptions::default(), |k, _m, v| {
         cb(k, v);
         false
     })
@@ -140,7 +133,7 @@ enum State {
 /// # Panics
 /// On unimplemented items
 #[allow(clippy::too_many_lines)]
-pub fn parse_with_options<'a>(
+pub fn parse_toml_with_options<'a>(
     on: &'a str,
     options: TOMLParseOptions,
     mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b TOMLKeyContext, RootTOMLValue<'a>) -> bool,
@@ -213,7 +206,7 @@ pub fn parse_with_options<'a>(
                             };
                             // Collect here
                             let () = key_chain.clear();
-                            let result = parse_key(part, level, &mut key_chain);
+                            let result = parse_toml_key(part, level, &mut key_chain);
                             if let Err(()) = result {
                                 return Err(TOMLParseError {
                                     at: start,
@@ -223,7 +216,7 @@ pub fn parse_with_options<'a>(
                             key_chain.push_table_key(TOMLKey::Index(idx));
                         } else {
                             key_chain.clear();
-                            let result = parse_key(part, level, &mut key_chain);
+                            let result = parse_toml_key(part, level, &mut key_chain);
                             if let Err(()) = result {
                                 return Err(TOMLParseError {
                                     at: start,
@@ -237,7 +230,7 @@ pub fn parse_with_options<'a>(
                     (Context::CurrentLevel, '=') if key_state.in_string.is_none() => {
                         let part = &on[start..idx];
                         let level = Level::Specifier;
-                        let result = parse_key(part, level, &mut key_chain);
+                        let result = parse_toml_key(part, level, &mut key_chain);
                         if let Err(()) = result {
                             return Err(TOMLParseError {
                                 at: start,
@@ -245,7 +238,7 @@ pub fn parse_with_options<'a>(
                             });
                         }
 
-                        let result = value::parse_with_options_chars(
+                        let result = value::parse_toml_with_options_chars(
                             on,
                             &mut chars,
                             &mut key_chain,
@@ -276,23 +269,10 @@ pub fn parse_with_options<'a>(
                 if let '\n' = chr {
                     if options.yield_comments {
                         let comment = on[start..idx].trim();
-                        let kind = if on[..start - 1]
-                            .rsplit_once('\n')
-                            .is_some_and(|(_, line)| !line.trim().is_empty())
-                        {
-                            CommentPosition::AtEnd
-                        } else if let Some((_, line)) = on[idx + 1..].split_once('\n')
-                            && let Some((between, _)) = line.split_once('\n')
-                            && between.trim().is_empty()
-                        {
-                            CommentPosition::AnnotatingNext
-                        } else {
-                            CommentPosition::Standalone
-                        };
                         let result = cb(
                             &key_chain.keys,
                             &key_chain.context,
-                            RootTOMLValue::Comment(comment, kind),
+                            RootTOMLValue::Comment(comment),
                         );
                         if result {
                             return Ok(());
@@ -307,7 +287,7 @@ pub fn parse_with_options<'a>(
     Ok(())
 }
 
-fn parse_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>) -> Result<(), ()> {
+fn parse_toml_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>) -> Result<(), ()> {
     let mut last = 0;
     let mut in_string: Option<&str> = None;
     // let mut joined = Joined::Alone;
@@ -375,7 +355,7 @@ pub mod value {
         },
         Equal,
         InObject,
-        Comment {
+        InComment {
             start: usize,
             multiline: bool,
             last_was_asterisk: bool,
@@ -399,20 +379,19 @@ pub mod value {
 
     /// # Errors
     /// errors on invalid TOML syntax
-    pub fn parse_with_options<'a>(
+    pub fn parse_toml_with_options<'a>(
         on: &'a str,
         options: TOMLParseOptions,
         mut cb: impl for<'b> FnMut(&'b [TOMLKey<'a>], &'b TOMLKeyContext, RootTOMLValue<'a>) -> bool,
     ) -> Result<Option<usize>, TOMLParseError> {
         let mut chars = on.char_indices();
         let mut key_chain = KeyChain::new();
-        parse_with_options_chars(on, &mut chars, &mut key_chain, options, &mut cb)
+        parse_toml_with_options_chars(on, &mut chars, &mut key_chain, options, &mut cb)
     }
 
-    /// TODO: `allow_comments` fix
-    /// Returns Some if finished early
+    /// Returns `Some` if finished early
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn parse_with_options_chars<'a>(
+    pub(crate) fn parse_toml_with_options_chars<'a>(
         on: &'a str,
         chars: &mut std::str::CharIndices<'a>,
         key_chain: &mut KeyChain<'a>,
@@ -483,9 +462,9 @@ pub mod value {
                                 multiline,
                             }
                         }
-                        c @ ('/' | '#') if !options.disallow_comments => State::Comment {
+                        c @ ('/' | '#') if !options.disallow_comments => State::InComment {
                             last_was_asterisk: false,
-                            start: idx,
+                            start: idx + 1,
                             multiline: false,
                             hash: c == '#',
                         },
@@ -500,7 +479,7 @@ pub mod value {
                         }
                     }
                 }
-                // TODO parse key function
+                // TODO parse_toml key function
                 State::InKey {
                     ref mut start,
                     state: ref mut _key_state,
@@ -585,21 +564,32 @@ pub mod value {
 
                     // dbg!(key_chain.keys.len(), current_len, &state);
                     let r#return = key_chain.keys.len() == current_len
-                        && !matches!(state, State::InObject)
+                        && !matches!(state, State::InObject | State::InComment { .. })
                         && !key_chain.in_object();
 
                     if r#return {
                         return Ok(None);
                     }
                 }
-                // TODO I don't think this exists
-                State::Comment {
+                // TODO I don't think multiline exists?
+                State::InComment {
                     ref mut last_was_asterisk,
                     ref mut multiline,
                     hash,
                     start,
                 } => {
                     if chr == '\n' && !*multiline {
+                        if options.yield_comments {
+                            let comment = on[start..idx].trim();
+                            let result = cb(
+                                &key_chain.keys,
+                                &key_chain.context,
+                                RootTOMLValue::Comment(comment),
+                            );
+                            if result {
+                                return Ok(None);
+                            }
+                        }
                         if let Some(TOMLKey::Index(..)) = key_chain.keys.last() {
                             state = State::ExpectingValue;
                         } else {
@@ -609,6 +599,7 @@ pub mod value {
                         *multiline = true;
                     } else if *multiline {
                         if *last_was_asterisk && chr == '/' {
+                            // TODO emit comment
                             if let Some(TOMLKey::Index(..)) = key_chain.keys.last() {
                                 state = State::ExpectingValue;
                             } else {
@@ -623,9 +614,9 @@ pub mod value {
                     if chr == '}' {
                         state = State::EndOfValue;
                     } else if let ('/' | '#', false) = (chr, options.disallow_comments) {
-                        state = State::Comment {
+                        state = State::InComment {
                             last_was_asterisk: false,
-                            start: idx,
+                            start: idx + 1,
                             multiline: false,
                             hash: chr == '#',
                         };
@@ -730,7 +721,7 @@ pub mod value {
                     reason: TOMLParseErrorReason::ExpectedEqual,
                 });
             }
-            State::Comment { multiline, .. } => {
+            State::InComment { multiline, .. } => {
                 if multiline {
                     return Err(TOMLParseError {
                         at: on.len(),
@@ -803,12 +794,12 @@ pub mod value {
             assert!(matches!(last, Some(TOMLKey::Index(..))));
             key_chain.pop_whole_slice_key();
             Ok(())
-        } else if let (true, c @ ('/' | '#')) = (allow_comments, chr) {
+        } else if let (c @ ('/' | '#'), true) = (chr, allow_comments) {
             // TODO
             key_chain.pop_whole_slice_key();
-            *state = State::Comment {
+            *state = State::InComment {
                 last_was_asterisk: false,
-                start: idx,
+                start: idx + 1,
                 multiline: false,
                 hash: c == '#',
             };

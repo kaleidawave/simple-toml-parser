@@ -19,59 +19,65 @@ env:
 jobs:
   validity:
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
     - name: Check source is valid
       run: cargo check --workspace
 
   formating:
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
+
     - name: Check formatting with rustfmt
       run: cargo fmt --all --check
-    - uses: brndnmtthws/rust-action-cargo-binstall@v1
-      with:
-        packages: taplo-cli
-    - name: Check TOML formatting with taplo
-    # TODO replace with own tool
-      if: false 
-      run: |
-        taplo fmt --check **/*/Cargo.toml
+
+    # TODO run self here!
 
   tests:
     needs: validity
+
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
     - uses: kaleidawave/release-downloader@improvements
       with:
         items: kaleidawave/experiments@assets[spectra]
+
     - name: Run all tests
       run: cargo test --workspace --verbose --all-features
 
   clippy:
     needs: validity
+    
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
     - name: Lint code with clippy
       run: cargo clippy
 
   publish-ability:
     runs-on: ubuntu-latest
+
     # TODO replace with own tool
     if: false 
     steps:
