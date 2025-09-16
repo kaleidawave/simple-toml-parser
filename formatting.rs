@@ -39,24 +39,17 @@ impl AsRef<str> for ValueIndentation {
 pub struct FormatOptions {
     pub indentation: KeyIndentation,
     pub prefix_indent_keys: bool,
-    // TODO pub prefix_indent_objects: bool,
+    // TODO pub prefix_indent_values: bool,
     pub value_indentation: ValueIndentation,
-    pub crlf: bool,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum CommentPosition {
-    AtEnd,
-    AnnotatingNext,
-    Standalone,
+    pub use_crlf: bool,
 }
 
 #[derive(Debug)]
-pub struct ObjectFindings<'a>(pub(crate) HashMap<Vec<TOMLKey<'a>>, u8>);
+pub struct ValueFindings<'a>(pub(crate) HashMap<Vec<TOMLKey<'a>>, u8>);
 
-impl ObjectFindings<'_> {
+impl ValueFindings<'_> {
     #[must_use]
-    pub fn in_expanded_object(&self, chain: &[TOMLKey<'_>]) -> bool {
+    pub fn in_expanded_value(&self, chain: &[TOMLKey<'_>]) -> bool {
         const PROPERTY_COUNT_THRESHOLD: u8 = 3;
 
         let current_properties = self.0.get(chain).copied().unwrap_or_default();
@@ -82,35 +75,40 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
 
     let parse_options = TOMLParseOptions {
         yield_comments: true,
-        ..Default::default()
     };
 
     // TODO under option?
-    let mut object_property_counts: HashMap<Vec<TOMLKey<'a>>, u8> = HashMap::new();
+    let mut value_property_counts: HashMap<Vec<TOMLKey<'a>>, u8> = HashMap::new();
 
-    let mut calculate_object_properties =
+    let mut calculate_value_properties =
         |keys: &[TOMLKey<'a>], context: &crate::TOMLKeyContext, value: crate::RootTOMLValue| {
-            let table_and_specifier_keys_len = context.table_keys + context.specifier_keys;
-            let (_table_and_specifier_keys, this_object) =
-                keys.split_at(table_and_specifier_keys_len as usize);
+            if context.in_value {
+                let table_and_specifier_keys_len = context.table_keys + context.specifier_keys;
+                let (_table_and_specifier_keys, this_value) =
+                    keys.split_at(table_and_specifier_keys_len as usize);
 
-            // Comments need to be lines
-            if let crate::RootTOMLValue::Comment(_) = value {
-                let entry = object_property_counts.entry(keys.to_vec()).or_default();
-                *entry += 3;
-            } else if !this_object.is_empty() {
-                // TODO to_vec?
-                let head = &keys[..keys.len() - 1];
-                let entry = object_property_counts.entry(head.to_vec()).or_default();
-                *entry = entry.saturating_add(1);
+                // Comments need to be lines
+                if let crate::RootTOMLValue::Comment(_) = value {
+                    // TODO
+                    let keys = &keys[..keys.len().saturating_sub(1)];
+                    // let keys = if context.comment_after_value {
+                    // } else {
+                    //     keys
+                    // };
+                    let entry = value_property_counts.entry(keys.to_vec()).or_default();
+                    *entry += 3;
+                } else {
+                    // TODO to_vec?
+                    let head = &keys[..keys.len() - 1];
+                    let entry = value_property_counts.entry(head.to_vec()).or_default();
+                    *entry = entry.saturating_add(1);
 
-                // Also set parents
-                for i in 1..this_object.len() {
-                    let head_head = &keys[..keys.len() - 1 - i];
-                    let entry = object_property_counts
-                        .entry(head_head.to_vec())
-                        .or_default();
-                    *entry = entry.saturating_add(3);
+                    // Also set parents
+                    for i in 1..this_value.len() {
+                        let head_head = &keys[..keys.len() - 1 - i];
+                        let entry = value_property_counts.entry(head_head.to_vec()).or_default();
+                        *entry = entry.saturating_add(3);
+                    }
                 }
             }
         };
@@ -119,7 +117,7 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
     let indentation: IndentationResult<'_> = match options.indentation {
         KeyIndentation::None => {
             parse_toml(input, parse_options, |keys, context, value| {
-                calculate_object_properties(keys, context, value);
+                calculate_value_properties(keys, context, value);
                 false
             })?;
             IndentationResult::None
@@ -127,7 +125,7 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
         KeyIndentation::WholeDocument => {
             let mut indent = 0;
             parse_toml(input, parse_options, |keys, context, value| {
-                calculate_object_properties(keys, context, value);
+                calculate_value_properties(keys, context, value);
                 let mut len = 0;
                 for key in &keys[context.table_keys as usize..][..context.specifier_keys as usize] {
                     if len != 0 {
@@ -147,7 +145,7 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
         KeyIndentation::Section => {
             let mut indents = std::collections::HashMap::new();
             parse_toml(input, parse_options, |keys, context, value| {
-                calculate_object_properties(keys, context, value);
+                calculate_value_properties(keys, context, value);
                 let mut len = 0;
                 for key in &keys[context.table_keys as usize..][..context.specifier_keys as usize] {
                     if len != 0 {
@@ -171,11 +169,11 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
         }
     };
 
-    // eprintln!("{object_property_counts:?}");
+    let value_property_counts = ValueFindings(value_property_counts);
 
-    let object_property_counts = ObjectFindings(object_property_counts);
+    // eprintln!("{value_property_counts:?}");
 
-    let new_line_sequence = if options.crlf { "\r\n" } else { "\n" };
+    let new_line_sequence = if options.use_crlf { "\r\n" } else { "\n" };
 
     let indent: &str = options.value_indentation.0;
 
@@ -188,56 +186,36 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
         input,
         parse_options,
         |keys: &[TOMLKey<'a>], context, value| {
-            if let RootTOMLValue::Comment(comment) = value {
-                let start = comment.as_ptr() as usize - input.as_ptr() as usize;
-                let start = input[..start].rfind('#').unwrap();
-                let kind = {
-                    let before_line = input[..start].rsplit_once('\n').map(|(_, line)| line);
-                    if before_line.is_none_or(|line| !line.trim().is_empty()) {
-                        CommentPosition::AtEnd
-                    } else if let Some((_, line)) = input[start..].split_once('\n')
-                        && let Some((between, _)) = line.split_once('\n')
-                        && between.trim().is_empty()
-                    {
-                        CommentPosition::Standalone
-                    } else {
-                        CommentPosition::AnnotatingNext
-                    }
-                };
+            let is_comment = matches!(value, RootTOMLValue::Comment(..));
+            let is_value = !is_comment;
 
-                if let CommentPosition::Standalone | CommentPosition::AnnotatingNext = kind {
-                    if !buf.is_empty() {
-                        buf.push_str(new_line_sequence);
-                    }
-                    buf.push_str(new_line_sequence);
-                    buf.push_str("# ");
-                } else {
-                    buf.push_str(" # ");
-                }
-                buf.push_str(comment);
-                if let CommentPosition::Standalone = kind {
-                    buf.push_str(new_line_sequence);
-                }
+            let (last_table, last_specifier, last_value) = last_context.split_keys(&last_keys);
+            let (this_table, this_specifier, this_value) = context.split_keys(keys);
+
+            let last_value = last_value.raw();
+            let this_value = this_value.raw();
+
+            // TODO `EmptyArray` and `EmptyInlineTable` return here
+            // cannot have comments in inline-tables
+            if is_comment
+                && this_value
+                    .iter()
+                    .any(|key| matches!(key, TOMLKey::Slice(_)))
+            {
                 return false;
             }
-
-            let (last_table, last_specifier, last_object) = last_context.split_keys(&last_keys);
-            let (this_table, this_specifier, this_object) = context.split_keys(keys);
 
             let same_table = this_table == last_table;
             let same_specifier = this_specifier == last_specifier;
 
-            let last_object = last_object.raw();
-            let this_object = this_object.raw();
-
-            let same_object_root = same_table && same_specifier;
-            let object_difference = if same_object_root {
-                split_prefix_difference(last_object, this_object)
+            let same_value_root = same_table && same_specifier;
+            let value_difference = if same_value_root {
+                split_prefix_difference(last_value, this_value)
             } else {
                 Difference {
-                    removed: last_object,
+                    removed: last_value,
                     same: &[],
-                    new: this_object,
+                    new: this_value,
                 }
             };
 
@@ -245,11 +223,11 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                 mut removed,
                 same,
                 mut new,
-            } = object_difference;
+            } = value_difference;
 
             let (incident_key, common) = if let ([existing, r2 @ ..], [new_key, n2 @ ..]) =
                 (removed, new)
-                && same_object_root
+                && same_value_root
                 && (matches!((existing, new_key), (TOMLKey::Slice(_), TOMLKey::Slice(_)))
                     || matches!((existing, new_key), (TOMLKey::Index(prev), TOMLKey::Index(this)) if prev + 1 == *this))
             {
@@ -263,42 +241,45 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
             // eprintln!();
             // eprintln!("removed: {removed:?} -> new: {new:?}. v={value:?}, ic={incident_key:?}");
 
-            if !removed.is_empty() {
+            if !removed.is_empty() || !context.in_value {
                 push_removed(
                     removed,
                     common,
                     (&last_keys, &last_context),
                     (indent, new_line_sequence),
-                    &object_property_counts,
+                    &value_property_counts,
                     &mut buf,
                 );
             }
 
-            if same_object_root && !last_object.is_empty() {
+            if same_value_root && !last_value.is_empty() && !is_comment {
                 buf.push(',');
             }
 
             if let Some(incident_key) = incident_key {
                 let current_chain = &keys[..this_table.len() + this_specifier.len() + same.len()];
                 // eprintln!("  current {current_chain:?}");
-                let pretty = object_property_counts.in_expanded_object(current_chain);
-                if pretty {
+
+                let pretty = value_property_counts.in_expanded_value(current_chain)
+                    && is_array_chain(this_value);
+                if let TOMLKey::Slice(incident_key) = incident_key {
+                    write!(&mut buf, " {incident_key} = ").unwrap();
+                } else if pretty && !is_comment {
                     write!(&mut buf, "{new_line_sequence}").unwrap();
-                    for _ in 0..current_chain.len() {
+                    for _ in new.len()..this_value.len() {
                         write!(&mut buf, "{indent}").unwrap();
                     }
-                    if let TOMLKey::Slice(incident_key) = incident_key {
-                        write!(&mut buf, "{incident_key} = ").unwrap();
-                    }
-                } else if let TOMLKey::Slice(incident_key) = incident_key {
-                    write!(&mut buf, " {incident_key} = ").unwrap();
                 }
             }
 
             {
                 if !same_table {
-                    if !buf.is_empty() {
+                    // char::is_whitespace
+                    let is_start = buf.is_empty();
+                    if !(is_start || buf.ends_with('\n')) {
                         buf.push_str(new_line_sequence);
+                    }
+                    if !is_start {
                         buf.push_str(new_line_sequence);
                     }
                     let is_table = this_table
@@ -309,14 +290,18 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                     let mut keys = this_table.iter();
                     if let Some(first) = keys.next() {
                         match first {
-                            TOMLKey::Slice(key) => buf.push_str(key),
+                            TOMLKey::Slice(key) => {
+                                let wrapping = if is_alphanumeric_string(key) { "" } else { "'" };
+                                write!(&mut buf, "{wrapping}{key}{wrapping}").unwrap();
+                            }
                             TOMLKey::Index(_key) => {}
                         }
                         for item in keys {
                             match item {
                                 TOMLKey::Slice(key) => {
-                                    buf.push('.');
-                                    buf.push_str(key);
+                                    let wrapping =
+                                        if is_alphanumeric_string(key) { "" } else { "'" };
+                                    write!(&mut buf, ".{wrapping}{key}{wrapping}").unwrap();
                                 }
                                 TOMLKey::Index(_key) => {}
                             }
@@ -326,51 +311,56 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                 }
 
                 if !same_specifier {
-                    if !buf.is_empty() {
-                        buf.push_str(new_line_sequence);
-                    }
-                    if options.prefix_indent_keys {
-                        buf.push_str("  ");
+                    if !is_comment {
+                        if !buf.is_empty() {
+                            buf.push_str(new_line_sequence);
+                        }
+                        if options.prefix_indent_keys {
+                            buf.push_str(indent);
+                        }
                     }
 
-                    let mut idx = 0;
+                    let buf_len = buf.len();
                     let mut iter = this_specifier.iter();
                     if let Some(first) = iter.next() {
                         match first {
                             TOMLKey::Slice(key) => {
-                                idx += key.len();
-                                buf.push_str(key);
+                                let wrapping = if is_alphanumeric_string(key) { "" } else { "'" };
+                                write!(&mut buf, "{wrapping}{key}{wrapping}").unwrap();
                             }
                             TOMLKey::Index(_key) => todo!("index key"),
                         }
                         for item in iter {
-                            idx += 1;
-                            buf.push('.');
                             match item {
                                 TOMLKey::Slice(key) => {
-                                    idx += key.len();
-                                    buf.push_str(key);
+                                    let wrapping =
+                                        if is_alphanumeric_string(key) { "" } else { "'" };
+                                    write!(&mut buf, ".{wrapping}{key}{wrapping}").unwrap();
                                 }
                                 TOMLKey::Index(_key) => todo!("index key"),
                             }
                         }
                     } else {
-                        dbg!("no specifiers...", keys);
+                        // eprintln!("no specifiers... {keys:?} {context:?}");
                     }
 
                     match &indentation {
                         IndentationResult::WholeDocument(indent) => {
-                            buf.push_str(&"                    "[idx..*indent]);
+                            let key_width = buf.len() - buf_len;
+                            buf.push_str(&"                    "[key_width..*indent]);
                         }
                         IndentationResult::Section(indents) => {
+                            let key_width = buf.len() - buf_len;
                             let prefix = &keys[..context.table_keys as usize];
                             let indent = *indents.get(prefix).unwrap();
-                            buf.push_str(&"                    "[idx..indent]);
+                            buf.push_str(&"                    "[key_width..indent]);
                         }
                         IndentationResult::None => {}
                     }
 
-                    buf.push_str(" = ");
+                    if !is_comment {
+                        buf.push_str(" = ");
+                    }
                 }
             }
 
@@ -378,25 +368,28 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                 let level = level_root + common;
                 let current_chain = &keys[..this_table.len() + this_specifier.len() + level];
                 // eprintln!("  new: {current_chain:?} {level:?}");
-                let pretty = object_property_counts.in_expanded_object(current_chain);
+                let pretty = value_property_counts.in_expanded_value(current_chain)
+                    && is_array_chain(this_value);
 
                 match key {
                     TOMLKey::Slice(key) => {
-                        if pretty && buf.ends_with(',') {
-                            write!(&mut buf, "{new_line_sequence}").unwrap();
-                            for _ in 0..level {
-                                write!(&mut buf, "{indent}").unwrap();
-                            }
-                        }
+                        // if pretty && buf.ends_with(',') {
+                        //     write!(&mut buf, "{new_line_sequence}").unwrap();
+                        //     for _ in 0..level {
+                        //         write!(&mut buf, "{indent}").unwrap();
+                        //     }
+                        // }
                         write!(&mut buf, "{{").unwrap();
-                        if pretty {
-                            write!(&mut buf, "{new_line_sequence}").unwrap();
-                            for _ in 0..=level {
-                                write!(&mut buf, "{indent}").unwrap();
-                            }
-                            write!(&mut buf, "{key} = ").unwrap();
+
+                        let wrapping = if is_alphanumeric_string(key) { "" } else { "'" };
+                        if false {
+                            // write!(&mut buf, "{new_line_sequence}").unwrap();
+                            // for _ in 0..=level {
+                            //     write!(&mut buf, "{indent}").unwrap();
+                            // }
+                            write!(&mut buf, "{wrapping}{key}{wrapping} = ").unwrap();
                         } else {
-                            write!(&mut buf, " {key} = ").unwrap();
+                            write!(&mut buf, " {wrapping}{key}{wrapping} = ").unwrap();
                         }
                     }
                     TOMLKey::Index(_) => {
@@ -406,9 +399,10 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                             || buf.ends_with("= ")
                             || buf.ends_with(indent))
                         {
+                            dbg!();
                             if pretty {
                                 write!(&mut buf, "{new_line_sequence}").unwrap();
-                                for _ in this_object {
+                                for _ in 1..this_value.len() {
                                     write!(&mut buf, "{indent}").unwrap();
                                 }
                             } else {
@@ -427,7 +421,10 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
             }
 
             // TODO is the best way to do this?
-            if !(buf.ends_with(char::is_whitespace) || buf.ends_with('[') || buf.ends_with(indent))
+            if is_value
+                && !(buf.ends_with(char::is_whitespace)
+                    || buf.ends_with('[')
+                    || buf.ends_with(indent))
             {
                 buf.push(' ');
             }
@@ -449,8 +446,51 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                 }
                 RootTOMLValue::Boolean(true) => buf.push_str("true"),
                 RootTOMLValue::Boolean(false) => buf.push_str("false"),
-                RootTOMLValue::Comment(..) => unreachable!("handled earlier"),
-                RootTOMLValue::Null => buf.push_str("null"),
+                RootTOMLValue::Comment(comment) => {
+                    use crate::utilities::{CommentPosition, get_comment_kind};
+
+                    let kind = get_comment_kind(input, comment);
+
+                    if let CommentPosition::Standalone | CommentPosition::AnnotatingNext = kind {
+                        // let pretty = value_property_counts.in_expanded_value(keys);
+                        let should_add_second = !buf.is_empty()
+                            && buf
+                                .rsplit_once('\n')
+                                .is_none_or(|(_, after)| !after.starts_with('#'))
+                            && this_value.is_empty();
+                        if should_add_second {
+                            buf.push_str(new_line_sequence);
+                        }
+                        buf.push_str(new_line_sequence);
+                        // if pretty {
+                        for _ in 0..context.value_keys.len() {
+                            write!(&mut buf, "{indent}").unwrap();
+                        }
+                        // }
+                        buf.push_str("# ");
+                    } else {
+                        buf.push_str(" # ");
+                    }
+                    buf.push_str(comment);
+                    if let CommentPosition::Standalone = kind {
+                        buf.push_str(new_line_sequence);
+                    }
+
+                    // if !removed.is_empty() && context.in_value {
+                    //     push_removed(
+                    //         removed,
+                    //         common,
+                    //         (&last_keys, &last_context),
+                    //         (indent, new_line_sequence),
+                    //         &value_property_counts,
+                    //         &mut buf,
+                    //     );
+                    // }
+                }
+                // TODO under cfg ?
+                RootTOMLValue::EmptyArray => buf.push_str("[]"),
+                // TODO under cfg ?
+                RootTOMLValue::EmptyInlineTable => buf.push_str("{}"),
             }
 
             keys.clone_into(&mut last_keys);
@@ -460,18 +500,24 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
         },
     )?;
 
-    let (_last_table, _last_specifier, last_object) = last_context.split_keys(&last_keys);
-    let last_object = last_object.raw();
-    let Difference { removed, .. } = split_prefix_difference(last_object, &[]);
+    let (_last_table, _last_specifier, last_value) = last_context.split_keys(&last_keys);
+    let last_value = last_value.raw();
+    let Difference { removed, .. } = split_prefix_difference(last_value, &[]);
 
     push_removed(
         removed,
         0,
         (&last_keys, &last_context),
         (indent, new_line_sequence),
-        &object_property_counts,
+        &value_property_counts,
         &mut buf,
     );
+
+    if let Some((_, after)) = buf.rsplit_once('\n')
+        && after.starts_with('#')
+    {
+        write!(&mut buf, "{new_line_sequence}").unwrap();
+    }
 
     Ok(buf)
 }
@@ -503,31 +549,22 @@ fn push_removed(
     common: usize,
     (last_keys, last_context): (&[TOMLKey<'_>], &crate::TOMLKeyContext),
     (indent, new_line_sequence): (&str, &str),
-    object_property_counts: &ObjectFindings,
+    value_property_counts: &ValueFindings,
     buf: &mut String,
 ) {
     for (level, key) in removed.iter().enumerate().rev() {
         let level = level + common;
-        let current_chain = &last_keys
+        let last_chain = &last_keys
             [..last_context.table_keys as usize + last_context.specifier_keys as usize + level];
-        // eprintln!("  removed {current_chain:?}");
-        let pretty = object_property_counts.in_expanded_object(current_chain);
+        // eprintln!("  removed {last_chain:?} {removed:?}");
+        let last_value =
+            &last_keys[last_context.table_keys as usize + last_context.specifier_keys as usize..];
+        let pretty =
+            value_property_counts.in_expanded_value(last_chain) && is_array_chain(last_value);
 
         match key {
             TOMLKey::Slice(_key) => {
-                if pretty {
-                    write!(buf, "{new_line_sequence}").unwrap();
-                    // for _ in 0..=level {
-                    for _ in 0..level {
-                        write!(buf, "{indent}").unwrap();
-                    }
-                }
-
-                if pretty {
-                    buf.push('}');
-                } else {
-                    buf.push_str(" }");
-                }
+                buf.push_str(" }");
             }
             TOMLKey::Index(_key) => {
                 if pretty {
@@ -541,4 +578,15 @@ fn push_removed(
             }
         }
     }
+}
+
+fn is_alphanumeric_string(key: &str) -> bool {
+    key.chars()
+        .all(|chr: char| chr.is_alphanumeric() || matches!(chr, '-' | '_'))
+}
+
+fn is_array_chain(this_value: &[TOMLKey<'_>]) -> bool {
+    this_value[..this_value.len().saturating_sub(1)]
+        .iter()
+        .all(|key| matches!(key, TOMLKey::Index(_)))
 }

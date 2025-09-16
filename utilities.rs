@@ -129,11 +129,11 @@ impl TOMLKeyContext {
     ) {
         let table = &on[..self.table_keys as usize];
         let specifier = &on[self.table_keys as usize..][..self.specifier_keys as usize];
-        let object = Partition::new(
+        let value = Partition::new(
             &on[self.table_keys as usize..][self.specifier_keys as usize..],
-            &self.object_keys,
+            &self.value_keys,
         );
-        (table, specifier, object)
+        (table, specifier, value)
     }
 }
 
@@ -155,10 +155,10 @@ impl<'a> KeyChain<'a> {
         self.context.specifier_keys += 1;
     }
 
-    pub fn push_object_key(&mut self, key: TOMLKey<'a>) {
+    pub fn push_value_key(&mut self, key: TOMLKey<'a>) {
         self.keys.push(key);
         // TODO length
-        self.context.object_keys.push(1);
+        self.context.value_keys.push(1);
     }
 
     pub fn pop_whole_slice_key(&mut self) {
@@ -166,17 +166,20 @@ impl<'a> KeyChain<'a> {
         let is_index = matches!(self.keys.last(), Some(TOMLKey::Index(_)));
         if is_index {
             let _ = self.keys.pop();
-            if !self.context.object_keys.is_empty() {
-                self.context.object_keys.pop();
+            if !self.context.value_keys.is_empty() {
+                self.context.value_keys.pop();
             } else if self.context.specifier_keys > 0 {
                 self.context.specifier_keys -= 1;
             } else if self.context.table_keys > 0 {
                 self.context.table_keys -= 1;
             }
-        } else if let Some(item) = self.context.object_keys.pop() {
+        } else if let Some(item) = self.context.value_keys.pop() {
             (0..item).for_each(|_| {
                 self.keys.pop();
             });
+            if self.context.value_keys.is_empty() {
+                self.context.in_value = false;
+            }
         } else if self.context.specifier_keys > 0 {
             let offset = self.context.table_keys;
             let range = offset as usize..(self.context.specifier_keys + offset) as usize;
@@ -190,13 +193,13 @@ impl<'a> KeyChain<'a> {
 
     pub fn clear(&mut self) {
         self.keys.clear();
-        self.context.object_keys.clear();
+        self.context.value_keys.clear();
         self.context.specifier_keys = 0;
         self.context.table_keys = 0;
     }
 
-    pub fn in_object(&self) -> bool {
-        !self.context.object_keys.is_empty()
+    pub fn in_value(&self) -> bool {
+        !self.context.value_keys.is_empty()
     }
 }
 
@@ -260,5 +263,32 @@ impl<'a, T> Iterator for PartitionIter<'a, '_, '_, T> {
         self.1 = self.2;
         self.2 += chunk_size;
         Some(&self.0.on[self.1..][..chunk_size])
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum CommentPosition {
+    AtEnd,
+    AnnotatingNext,
+    Standalone,
+}
+
+/// # Panics
+/// panics if the comment is not prefixed by '#' in the source
+#[must_use]
+pub fn get_comment_kind(source: &str, comment: &str) -> CommentPosition {
+    let start = comment.as_ptr() as usize - source.as_ptr() as usize;
+    let start = source[..start].rfind('#').unwrap();
+    let before_line = source[..start].rsplit_once('\n').map(|(_, line)| line);
+    // context.comment_after_value ||
+    if before_line.is_none_or(|line| !line.trim().is_empty()) {
+        CommentPosition::AtEnd
+    } else if let Some((_, line)) = source[start..].split_once('\n')
+        && let Some((between, _)) = line.split_once('\n')
+        && between.trim().is_empty()
+    {
+        CommentPosition::Standalone
+    } else {
+        CommentPosition::AnnotatingNext
     }
 }

@@ -7,13 +7,16 @@ use utilities::KeyChain;
 pub struct TOMLKeyContext {
     pub table_keys: u8,
     pub specifier_keys: u8,
-    // later keys get posted here
-    pub object_keys: Vec<u8>,
+    /// values can have joined keys
+    pub value_keys: Vec<u8>,
+    /// for comments. in array or inline-table
+    pub in_value: bool,
+    /// for comments
+    pub comment_after_value: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TOMLParseOptions {
-    pub disallow_comments: bool,
     pub yield_comments: bool,
 }
 
@@ -39,7 +42,7 @@ pub enum Level {
     Table,
     #[default]
     Specifier,
-    Object,
+    Value,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Copy)]
@@ -47,8 +50,11 @@ pub enum RootTOMLValue<'a> {
     String(TOMLStringValue<'a>),
     Number(TOMLNumberValue<'a>),
     Boolean(bool),
+    /// Not a value but for formamtting
     Comment(&'a str),
-    Null,
+    /// For document preservation
+    EmptyArray,
+    EmptyInlineTable,
 }
 
 /// Last is literal
@@ -72,7 +78,7 @@ pub enum TOMLParseErrorReason {
     ExpectedColon,
     ExpectedEndOfValue,
     ExpectedBracket,
-    ExpectedTrueFalseNull,
+    ExpectedBoolean,
     ExpectedValue,
     ExpectedEqual,
     ExpectedQuote,
@@ -120,9 +126,10 @@ enum Context {
     ArrayOfTables,
 }
 
+#[derive(Debug)]
 enum State {
     StartOfLine,
-    // Equal,
+    // AwaitingEqual,
     InComment,
     InKey { state: KeyState, context: Context },
 }
@@ -284,13 +291,27 @@ pub fn parse_toml_with_options<'a>(
         }
     }
 
+    match state {
+        State::InComment => {
+            if options.yield_comments {
+                let comment = on[start..].trim();
+                let _ = cb(
+                    &key_chain.keys,
+                    &key_chain.context,
+                    RootTOMLValue::Comment(comment),
+                );
+            }
+        }
+        State::StartOfLine => {}
+        State::InKey { .. } => panic!("TODO return error for leftover {state:?}"),
+    }
+
     Ok(())
 }
 
 fn parse_toml_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>) -> Result<(), ()> {
     let mut last = 0;
     let mut in_string: Option<&str> = None;
-    // let mut joined = Joined::Alone;
     let mut found = false;
 
     for (idx, matched) in part.match_indices(&['"', '\'', '.']) {
@@ -301,22 +322,23 @@ fn parse_toml_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>)
                 match level {
                     Level::Table => key_chain.push_table_key(key),
                     Level::Specifier => key_chain.push_specifier_key(key),
-                    Level::Object => key_chain.push_object_key(key),
+                    Level::Value => key_chain.push_value_key(key),
                 }
                 last = idx + 1;
                 in_string = None;
                 found = true;
             }
         } else if let "." = matched {
-            let key = &part[last..idx].trim();
-            let key = TOMLKey::Slice(key);
-            match level {
-                Level::Table => key_chain.push_table_key(key),
-                Level::Specifier => key_chain.push_specifier_key(key),
-                Level::Object => key_chain.push_object_key(key),
+            if !part[..idx].ends_with(['"', '\'']) {
+                let key = &part[last..idx].trim();
+                let key = TOMLKey::Slice(key);
+                match level {
+                    Level::Table => key_chain.push_table_key(key),
+                    Level::Specifier => key_chain.push_specifier_key(key),
+                    Level::Value => key_chain.push_value_key(key),
+                }
+                found = true;
             }
-            // joined = Joined::Dot;
-            found = true;
             last = idx + 1;
         } else {
             assert!(part[..idx].trim_end().ends_with('.'));
@@ -332,7 +354,7 @@ fn parse_toml_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>)
         match level {
             Level::Table => key_chain.push_table_key(key),
             Level::Specifier => key_chain.push_specifier_key(key),
-            Level::Object => key_chain.push_object_key(key),
+            Level::Value => key_chain.push_value_key(key),
         }
         Ok(())
     } else {
@@ -341,6 +363,9 @@ fn parse_toml_key<'a>(part: &'a str, level: Level, key_chain: &mut KeyChain<'a>)
     }
 }
 
+/// Contains parsing for things after the `=`. Includes a function for parsing the RHS (standalone)
+///
+/// TODO date handling
 pub mod value {
     use super::{
         KeyChain, KeyState, RootTOMLValue, TOMLKey, TOMLKeyContext, TOMLNumberValue,
@@ -353,8 +378,13 @@ pub mod value {
             start: usize,
             state: KeyState,
         },
-        Equal,
-        InObject,
+        AwaitingEqual,
+        InInlineTable {
+            yielded: bool,
+        },
+        InArray {
+            yielded: bool,
+        },
         InComment {
             start: usize,
             multiline: bool,
@@ -371,7 +401,7 @@ pub mod value {
         NumberValue {
             start: usize,
         },
-        TrueFalseNull {
+        Boolean {
             start: usize,
         },
         EndOfValue,
@@ -404,28 +434,47 @@ pub mod value {
 
         while let Some((idx, chr)) = chars.next() {
             match state {
-                State::ExpectingValue => {
+                State::ExpectingValue | State::InArray { .. } => {
                     state = match chr {
                         '[' => {
-                            key_chain.push_object_key(TOMLKey::Index(0));
-                            State::ExpectingValue
+                            key_chain.context.in_value = true;
+                            key_chain.push_value_key(TOMLKey::Index(0));
+                            State::InArray { yielded: false }
                         }
                         ']' => {
-                            // TODO check
-                            let () = key_chain.pop_whole_slice_key();
-                            State::EndOfValue
+                            if let State::InArray { yielded } = state {
+                                let () = key_chain.pop_whole_slice_key();
+                                if !yielded {
+                                    let _result = cb(
+                                        &key_chain.keys,
+                                        &key_chain.context,
+                                        RootTOMLValue::EmptyArray,
+                                    );
+                                }
+                                key_chain.context.in_value =
+                                    !key_chain.context.value_keys.is_empty();
+                                State::EndOfValue
+                            } else {
+                                panic!("err")
+                            }
                         }
-                        '{' => State::InObject,
+                        '{' => {
+                            key_chain.context.in_value = true;
+                            State::InInlineTable { yielded: false }
+                        }
                         '}' => {
+                            dbg!();
+                            // hmm
+                            key_chain.pop_whole_slice_key();
                             let in_array =
                                 matches!(key_chain.keys.last(), Some(TOMLKey::Index(..)));
-                            key_chain.pop_whole_slice_key();
+
                             if in_array {
                                 State::ExpectingValue
                             } else {
                                 // Continues work...
                                 // key_chain.pop_whole_slice_key();
-                                State::InObject
+                                State::InInlineTable { yielded: true }
                             }
                         }
                         '"' => {
@@ -462,14 +511,14 @@ pub mod value {
                                 multiline,
                             }
                         }
-                        c @ ('/' | '#') if !options.disallow_comments => State::InComment {
+                        '/' | '#' => State::InComment {
                             last_was_asterisk: false,
                             start: idx + 1,
                             multiline: false,
-                            hash: c == '#',
+                            hash: chr == '#',
                         },
                         '0'..='9' | '-' => State::NumberValue { start: idx },
-                        't' | 'f' | 'n' => State::TrueFalseNull { start: idx },
+                        't' | 'f' => State::Boolean { start: idx },
                         chr if chr.is_whitespace() => state,
                         _ => {
                             return Err(TOMLParseError {
@@ -489,14 +538,14 @@ pub mod value {
                     // TODO more based on existing
                     if is_equal || is_whitespace {
                         let key = &on[*start..idx];
-                        key_chain.push_object_key(TOMLKey::Slice(key));
+                        key_chain.push_value_key(TOMLKey::Slice(key));
                         state = if is_equal {
                             State::ExpectingValue
                         } else {
-                            State::Equal
+                            State::AwaitingEqual
                         };
                     } else if let '.' = chr {
-                        key_chain.push_object_key(TOMLKey::Slice(&on[*start..idx]));
+                        key_chain.push_value_key(TOMLKey::Slice(&on[*start..idx]));
                         *start = idx + chr.len_utf8();
                         // key_state.joined = Joined::Dot;
                     } else {
@@ -524,7 +573,6 @@ pub mod value {
                             ((literal && chr == '\'') || (!literal && chr == '"'), idx)
                         };
                         if r#yield {
-                            // dbg!(start, idx, multiline, on.len());
                             let value = &on[start..idx];
                             let on = if multiline {
                                 value
@@ -549,7 +597,7 @@ pub mod value {
                         }
                     }
                 }
-                State::Equal => {
+                State::AwaitingEqual => {
                     if chr == '=' {
                         state = State::ExpectingValue;
                     } else if !chr.is_whitespace() {
@@ -559,13 +607,41 @@ pub mod value {
                         });
                     }
                 }
+                // State::AwaitingCommaOrClose => {
+                //     match chr {
+                //         ',' => {
+                //             state = State::ExpectingValue;
+                //         }
+                //         ']' => {
+                //             state = State::ExpectingValue;
+                //         }
+                //         '}' => {
+                //             state = State::ExpectingValue;
+                //         }
+                //         '#' | '/' => {
+                //             State::InComment {
+                //                 last_was_asterisk: false,
+                //                 start: idx + 1,
+                //                 multiline: false,
+                //                 hash: chr == '#',
+                //             }
+                //         }
+                //         chr => {
+                //             if !chr.is_whitespace() {
+                //                 return Err(TOMLParseError {
+                //                     at: idx,
+                //                     reason: TOMLParseErrorReason::ExpectedEqual,
+                //                 });
+                //             }
+                //         }
+                //     }
+                // }
                 State::EndOfValue => {
-                    end_of_value(idx, chr, &mut state, key_chain, !options.disallow_comments)?;
+                    state = end_of_value(idx, chr, key_chain)?;
 
-                    // dbg!(key_chain.keys.len(), current_len, &state);
                     let r#return = key_chain.keys.len() == current_len
-                        && !matches!(state, State::InObject | State::InComment { .. })
-                        && !key_chain.in_object();
+                        && !matches!(state, State::InInlineTable { .. } | State::InComment { .. })
+                        && !key_chain.in_value();
 
                     if r#return {
                         return Ok(None);
@@ -586,14 +662,27 @@ pub mod value {
                                 &key_chain.context,
                                 RootTOMLValue::Comment(comment),
                             );
+
                             if result {
                                 return Ok(None);
                             }
                         }
+
+                        if key_chain.context.comment_after_value {
+                            key_chain.pop_whole_slice_key();
+                            key_chain.context.comment_after_value = false;
+
+                            let r#return = key_chain.keys.is_empty();
+
+                            if r#return {
+                                return Ok(None);
+                            }
+                        }
+
                         if let Some(TOMLKey::Index(..)) = key_chain.keys.last() {
-                            state = State::ExpectingValue;
+                            state = State::InArray { yielded: true };
                         } else {
-                            state = State::InObject;
+                            state = State::InInlineTable { yielded: true };
                         }
                     } else if chr == '*' && start + 1 == idx && !hash {
                         *multiline = true;
@@ -601,61 +690,74 @@ pub mod value {
                         if *last_was_asterisk && chr == '/' {
                             // TODO emit comment
                             if let Some(TOMLKey::Index(..)) = key_chain.keys.last() {
-                                state = State::ExpectingValue;
+                                state = State::InArray { yielded: true };
                             } else {
-                                state = State::InObject;
+                                state = State::InInlineTable { yielded: true };
                             }
                         } else {
                             *last_was_asterisk = chr == '*';
                         }
                     }
                 }
-                State::InObject => {
-                    if chr == '}' {
+                State::InInlineTable { yielded } => match chr {
+                    '}' => {
+                        if !yielded {
+                            let _result = cb(
+                                &key_chain.keys,
+                                &key_chain.context,
+                                RootTOMLValue::EmptyInlineTable,
+                            );
+                        }
                         state = State::EndOfValue;
-                    } else if let ('/' | '#', false) = (chr, options.disallow_comments) {
+                    }
+                    '#' => {
                         state = State::InComment {
                             last_was_asterisk: false,
                             start: idx + 1,
                             multiline: false,
                             hash: chr == '#',
                         };
-                    } else if chr.is_alphabetic() {
+                    }
+                    chr if chr.is_alphabetic() => {
                         state = State::InKey {
                             start: idx,
                             state: KeyState::default(),
                         }
-                    } else if !chr.is_whitespace() {
-                        return Err(TOMLParseError {
-                            at: idx,
-                            reason: TOMLParseErrorReason::ExpectedKey,
-                        });
                     }
-                }
+                    chr => {
+                        if !chr.is_whitespace() {
+                            return Err(TOMLParseError {
+                                at: idx,
+                                reason: TOMLParseErrorReason::ExpectedKey,
+                            });
+                        }
+                    }
+                },
                 State::NumberValue { start } => {
                     // TODO actual number handing
-                    if chr.is_whitespace() || matches!(chr, '}' | ',' | ']') {
-                        let result = cb(
-                            &key_chain.keys,
-                            &key_chain.context,
-                            RootTOMLValue::Number(TOMLNumberValue(&on[start..idx])),
-                        );
+                    // TODO if date : etc
+                    if chr.is_whitespace() || matches!(chr, '}' | ',' | ']' | '#') {
+                        let value = RootTOMLValue::Number(TOMLNumberValue(&on[start..idx]));
+                        let result = cb(&key_chain.keys, &key_chain.context, value);
                         if result {
                             return Ok(Some(idx));
                         }
-                        state = State::EndOfValue;
-                        end_of_value(idx, chr, &mut state, key_chain, !options.disallow_comments)?;
+
+                        // Because chr can be delimeter, we run `end_of_value` here
+                        state = end_of_value(idx, chr, key_chain)?;
 
                         let r#return = key_chain.keys.len() == current_len
-                            && !matches!(state, State::InObject)
-                            && !key_chain.in_object();
+                            && !matches!(state, State::InInlineTable { .. })
+                            && !key_chain.in_value()
+                            && !on[idx..].trim_start().starts_with('#');
+                        // && !utilities::rest_of_line(&on[idx..]).contains('#');
 
                         if r#return {
                             return Ok(None);
                         }
                     }
                 }
-                State::TrueFalseNull { start } => {
+                State::Boolean { start } => {
                     let diff = idx - start + 1;
                     if diff < 4 {
                         // ...
@@ -672,19 +774,11 @@ pub mod value {
                                 }
                                 state = State::EndOfValue;
                             }
-                            "null" => {
-                                let result =
-                                    cb(&key_chain.keys, &key_chain.context, RootTOMLValue::Null);
-                                if result {
-                                    return Ok(Some(idx + chr.len_utf8()));
-                                }
-                                state = State::EndOfValue;
-                            }
                             "fals" => {}
                             _ => {
                                 return Err(TOMLParseError {
                                     at: idx,
-                                    reason: TOMLParseErrorReason::ExpectedTrueFalseNull,
+                                    reason: TOMLParseErrorReason::ExpectedBoolean,
                                 });
                             }
                         }
@@ -701,7 +795,7 @@ pub mod value {
                     } else {
                         return Err(TOMLParseError {
                             at: idx,
-                            reason: TOMLParseErrorReason::ExpectedTrueFalseNull,
+                            reason: TOMLParseErrorReason::ExpectedBoolean,
                         });
                     }
                 }
@@ -715,7 +809,7 @@ pub mod value {
                     reason: TOMLParseErrorReason::ExpectedQuote,
                 });
             }
-            State::Equal => {
+            State::AwaitingEqual => {
                 return Err(TOMLParseError {
                     at: on.len(),
                     reason: TOMLParseErrorReason::ExpectedEqual,
@@ -729,7 +823,7 @@ pub mod value {
                     });
                 }
             }
-            State::EndOfValue | State::ExpectingValue => {
+            State::EndOfValue | State::ExpectingValue | State::InArray { .. } => {
                 if !key_chain.keys.is_empty() {
                     return Err(TOMLParseError {
                         at: on.len(),
@@ -737,7 +831,7 @@ pub mod value {
                     });
                 }
             }
-            State::InObject => {
+            State::InInlineTable { .. } => {
                 return Err(TOMLParseError {
                     at: on.len(),
                     reason: TOMLParseErrorReason::ExpectedBracket,
@@ -754,10 +848,10 @@ pub mod value {
                     return Ok(Some(on.len()));
                 }
             }
-            State::TrueFalseNull { start: _ } => {
+            State::Boolean { start: _ } => {
                 return Err(TOMLParseError {
                     at: on.len(),
-                    reason: TOMLParseErrorReason::ExpectedTrueFalseNull,
+                    reason: TOMLParseErrorReason::ExpectedBoolean,
                 });
             }
         }
@@ -765,53 +859,58 @@ pub mod value {
         Ok(None)
     }
 
-    /// Always pops from `key_chain` **unless** we are in an array.
+    /// Always pops from `key_chain`
+    /// TODO should return new state
     fn end_of_value(
         idx: usize,
         chr: char,
-        state: &mut State,
         key_chain: &mut KeyChain<'_>,
-        allow_comments: bool,
-    ) -> Result<(), TOMLParseError> {
-        if let ',' = chr {
-            if let Some(TOMLKey::Index(i)) = key_chain.keys.last_mut() {
-                *i += 1;
-                *state = State::ExpectingValue;
-            } else {
-                *state = State::InObject;
-                key_chain.pop_whole_slice_key();
+    ) -> Result<State, TOMLParseError> {
+        match chr {
+            ',' => {
+                if let Some(TOMLKey::Index(i)) = key_chain.keys.last_mut() {
+                    *i += 1;
+                    Ok(State::InArray { yielded: true })
+                } else {
+                    key_chain.pop_whole_slice_key();
+                    Ok(State::InInlineTable { yielded: true })
+                }
             }
-            Ok(())
-        } else if let '}' = chr {
-            let last = key_chain.keys.last();
-            // TODO errors here if index
-            assert!(matches!(last, Some(TOMLKey::Slice(..))));
-            key_chain.pop_whole_slice_key();
-            Ok(())
-        } else if let ']' = chr {
-            let last = key_chain.keys.last();
-            // TODO errors here if slice etc
-            assert!(matches!(last, Some(TOMLKey::Index(..))));
-            key_chain.pop_whole_slice_key();
-            Ok(())
-        } else if let (c @ ('/' | '#'), true) = (chr, allow_comments) {
-            // TODO
-            key_chain.pop_whole_slice_key();
-            *state = State::InComment {
-                last_was_asterisk: false,
-                start: idx + 1,
-                multiline: false,
-                hash: c == '#',
-            };
-            Ok(())
-        } else if !chr.is_whitespace() {
-            eprintln!("Error {chr:?}, {key_chain:?}");
-            Err(TOMLParseError {
-                at: idx,
-                reason: TOMLParseErrorReason::ExpectedEndOfValue,
-            })
-        } else {
-            Ok(())
+            '}' => {
+                let last = key_chain.keys.last();
+                // TODO errors here if index
+                assert!(matches!(last, Some(TOMLKey::Slice(..))));
+                key_chain.pop_whole_slice_key();
+                Ok(State::EndOfValue)
+            }
+            ']' => {
+                let last = key_chain.keys.last();
+                // TODO errors here if slice etc
+                assert!(matches!(last, Some(TOMLKey::Index(..))));
+                key_chain.pop_whole_slice_key();
+                key_chain.context.in_value = !key_chain.context.value_keys.is_empty();
+                Ok(State::EndOfValue)
+            }
+            '#' | '/' => {
+                key_chain.context.comment_after_value = true;
+                Ok(State::InComment {
+                    last_was_asterisk: false,
+                    start: idx + 1,
+                    multiline: false,
+                    hash: chr == '#',
+                })
+            }
+            chr => {
+                if chr.is_whitespace() {
+                    Ok(State::EndOfValue)
+                } else {
+                    eprintln!("Error {chr:?}, {key_chain:?}");
+                    Err(TOMLParseError {
+                        at: idx,
+                        reason: TOMLParseErrorReason::ExpectedEndOfValue,
+                    })
+                }
+            }
         }
     }
 }

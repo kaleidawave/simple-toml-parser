@@ -1,4 +1,6 @@
-use simple_toml_parser::{RootTOMLValue, TOMLKey, TOMLKeyContext, parse_toml_with_options};
+use simple_toml_parser::{
+    RootTOMLValue, TOMLKey, TOMLKeyContext, TOMLParseOptions, parse_toml_with_options,
+};
 
 static EXAMPLE: &str = r#"
 # This is a TOML document
@@ -26,8 +28,9 @@ ip = "10.0.0.2"
 "#;
 
 fn main() {
-    let arg = std::env::args().nth(1);
+    let mut arguments = std::env::args().skip(1);
 
+    let arg = arguments.next();
     if let Some("--interactive") = arg.as_deref() {
         run_interactive();
         return;
@@ -41,10 +44,32 @@ fn main() {
         EXAMPLE.trim_start().to_owned()
     };
 
-    let options = Default::default();
+    let mut yield_comments = false;
+
+    for arg in arguments {
+        let arg = arg.as_str();
+        if let "--yield-comments" = arg {
+            yield_comments = true;
+        } else {
+            eprintln!("unknown {arg:?}");
+        }
+    }
+
+    let options = TOMLParseOptions {
+        yield_comments,
+        ..TOMLParseOptions::default()
+    };
     parse_toml_with_options(&source, options, |keys, context, value| {
         debug_keys(keys, context);
         debug_value(value);
+        if context.comment_after_value {
+            print!(" after value");
+        }
+        if let RootTOMLValue::Comment(comment) = value {
+            let kind = simple_toml_parser::utilities::get_comment_kind(&source, comment);
+            print!(" {kind:?}");
+        }
+        println!();
         false
     })
     .unwrap();
@@ -66,7 +91,7 @@ fn debug_keys(keys: &[TOMLKey<'_>], context: &TOMLKeyContext) {
         }
     }
 
-    let (table_keys, specifier_keys, object_keys) = context.split_keys(keys);
+    let (table_keys, specifier_keys, value_keys) = context.split_keys(keys);
 
     if !table_keys.is_empty() {
         print!("[");
@@ -78,7 +103,7 @@ fn debug_keys(keys: &[TOMLKey<'_>], context: &TOMLKeyContext) {
         debug_keys_(specifier_keys);
     }
 
-    for keys in object_keys.iter() {
+    for keys in value_keys.iter() {
         print!(" {{");
         debug_keys_(keys);
         print!("}}");
@@ -112,12 +137,12 @@ fn debug_value(value: RootTOMLValue<'_>) {
                 start = idx + 1;
             }
             escaped += Cow::Borrowed(&value[start..]);
-            println!("String('{escaped}')");
+            print!("String('{escaped}')");
         } else {
-            println!("String({value:?})", value = value.value());
+            print!("String({value:?})", value = value.value());
         }
     } else {
-        println!("{value:?}");
+        print!("{value:?}");
     }
 }
 
@@ -148,10 +173,19 @@ fn run_interactive() {
                 let out = format_toml(&source, &options).expect("invalid input to format");
                 println!("{out}");
             } else {
-                let options = Default::default();
-                let out = parse_toml_with_options(&source, options, |keys, context, value| {
+                let (before, after) = source.split_once("---").unwrap_or(("", &source));
+                let yield_comments = before.contains("yield comments");
+                let options = TOMLParseOptions {
+                    yield_comments,
+                    ..TOMLParseOptions::default()
+                };
+                let out = parse_toml_with_options(after, options, |keys, context, value| {
                     debug_keys(keys, context);
                     debug_value(value);
+                    if context.comment_after_value {
+                        print!(" after value");
+                    }
+                    println!();
                     false
                 });
                 if let Err(error) = out {

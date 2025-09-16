@@ -19,29 +19,48 @@ name = "Tom Preston-Werner"
 ["owner"] "name" => String("Tom Preston-Werner")
 ```
 
-### Tables and inline tables
+### Values
 
 ```toml
-[database]
+a = false
+b = true
+```
+
+```
+"a" => Boolean(false)
+"b" => Boolean(true)
+```
+
+### Arrays
+
+```toml
 enabled = true
 ports = [8000, 8001, 8002]
 data = [["delta", "phi"], [3.14]]
+```
+
+```
+"enabled" => Boolean(true)
+"ports" {0} => Number(8000)
+"ports" {1} => Number(8001)
+"ports" {2} => Number(8002)
+"data" {0} {0} => String("delta")
+"data" {0} {1} => String("phi")
+"data" {1} {0} => Number(3.14)
+```
+
+### Inline tables
+
+```toml
 temp_targets = { cpu = 79.5, case = 72.0 }
 ```
 
 ```
-["database"] "enabled" => Boolean(true)
-["database"] "ports" {0} => Number(8000)
-["database"] "ports" {1} => Number(8001)
-["database"] "ports" {2} => Number(8002)
-["database"] "data" {0} {0} => String("delta")
-["database"] "data" {0} {1} => String("phi")
-["database"] "data" {1} {0} => Number(3.14)
-["database"] "temp_targets" {"cpu"} => Number(79.5)
-["database"] "temp_targets" {"case"} => Number(72.0)
+"temp_targets" {"cpu"} => Number(79.5)
+"temp_targets" {"case"} => Number(72.0)
 ```
 
-### Dot 
+### Dotted table keys
 
 ```toml
 [servers.alpha]
@@ -66,7 +85,7 @@ role = "frontend"
 Error: TOMLParseError { at: 0, reason: ExpectedKey }
 ```
 
-### Dotted keys
+### Dotted specifier keys
 
 ```toml
 name = "Orange"
@@ -210,6 +229,41 @@ type.name = "pug"
 ["dog"."tater.man"] "type"."name" => String("pug")
 ```
 
+## Comments
+
+> This is for formatting below
+
+### Basic comment
+
+```toml
+yield comments
+---
+# this is a comment
+```
+
+```
+ => Comment("this is a comment")
+```
+
+### On the same line
+
+```toml
+yield comments
+---
+x = 2 # this is a comment
+
+array = [
+	3 # comment after
+]
+```
+
+```
+"x" => Number(2)
+"x" => Comment("this is a comment") after value
+"array" {0} => Number(3)
+"array" {0} => Comment("comment after") after value
+```
+
 ## Formatting
 
 ### Format keys
@@ -321,63 +375,47 @@ a = [
 ]
 ```
 
-### Formatting object literals
+### Formatting inline table literals
 
 ```toml
 format
 ---
-obj1 = { name = "value", 
+it1 = { name = "value", 
 version = "0.5.1" }
-obj2 = { name = "x", nested = {
+it2 = { name = "x", nested = {
 
 data = "12323" }, version="1.6.2" }
 ```
 
 ```toml
-obj1 = { name = "value", version = "0.5.1" }
-obj2 = {
-	name = "x",
-	nested = { data = "12323" },
-	version = "1.6.2"
-}
+it1 = { name = "value", version = "0.5.1" }
+it2 = { name = "x", nested = { data = "12323" }, version = "1.6.2" }
 ```
 
-### Object of arrays
+### inline table of arrays
 
 ```toml
 format
 ---
-object_array = { a = [1], b = [2, 3, 4], c = [5] }
+inline_table_array = { a = [1], b = [2, 3, 4], c = [5] }
 ```
 
 ```toml
-object_array = {
-	a = [1],
-	b = [
-		2,
-		3,
-		4
-	],
-	c = [5]
-}
+inline_table_array = { a = [1], b = [2, 3, 4], c = [5] }
 ```
 
-### Array of objects
+### Array of inline_tables
 
 ```toml
 format
 ---
-array_object = [{a = 1}, { b = 2, c = 3, d = 4 }]
+array_inline_table = [{a = 1}, { b = 2, c = 3, d = 4 }]
 ```
 
 ```toml
-array_object = [
+array_inline_table = [
 	{ a = 1 },
-	{
-		b = 2,
-		c = 3,
-		d = 4
-	}
+	{ b = 2, c = 3, d = 4 }
 ]
 ```
 
@@ -401,37 +439,85 @@ aaaaa = [
 ]
 ```
 
-### Deeply nested object
+### Deeply nested inline_table
 
 ```toml
 format
 ---
-ooooo = { a = { b = { c = { d = { e = 1 } } } } }
+itititit = { a = { b = { c = { d = { e = 1 } } } } }
 ```
 
 ```toml
-ooooo = {
-	a = {
-		b = {
-			c = {
-				d = { e = 1 }
-			}
-		}
-	}
-}
+itititit = { a = { b = { c = { d = { e = 1 } } } } }
 ```
 
-### Nested comments
+### Comments in array
 
 ```toml
 format
 ---
-object = {a = 1 # hi
-     }
+array = [1 # hi
+]
 ```
 
 ```toml
-object = {
-	a = 1 # hi
+array = [
+	1 # hi
+]
+```
+
+### Comments in inline-tables
+
+```toml
+format
+---
+it = { a = 1 # hi
 }
+```
+
+> new lines in inline-tables are discouraged. So these comments currently get removed...
+
+```toml
+it = { a = 1 }
+```
+
+### Comments after table
+
+```toml
+format
+---
+[table] # table things
+a = 1
+```
+
+```toml
+[table] # table things
+a = 1
+```
+
+### Discern between before and after
+
+```toml
+format
+---
+array = [1 
+] 
+
+# hi
+
+a = [
+	"b",
+	# "c"
+]
+```
+
+```toml
+array = [1]
+
+# hi
+
+a = [
+	"b"
+	# "c"
+]
 ```
