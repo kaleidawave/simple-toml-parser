@@ -89,3 +89,55 @@ jobs:
           cargo publish --no-verify --dry-run
         done
       shell: bash
+
+  # TEMP
+  publish-assets:
+    needs: validity
+
+    permissions: write-all
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+        - os: windows-latest
+          platform-name: x86_64-pc-windows
+          executable-extension: ".exe"
+        - os: ubuntu-latest
+          platform-name: x86_64-unknown-linux
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      GH_RELEASE_TAG: canary
+      # why can these not be the same :(
+      LEVEL: dev
+      LEVEL_FOLDER: debug
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Set variables
+        id: information
+        run: |
+          echo "GITHUB_RUN_DATE=$(TZ="Europe/London" date +"%Y-%m-%d %T")" >> "$GITHUB_OUTPUT"
+          echo "GIT_LAST_COMMIT=$(git log -n 1 --format="%H")" >> "$GITHUB_OUTPUT"
+
+        shell: bash
+
+      - name: Build binary
+        run: cargo build --example format --profile $LEVEL
+        env:
+          GITHUB_RUN_DATE: ${{ steps.information.outputs.GITHUB_RUN_DATE }}
+          GIT_LAST_COMMIT: ${{ steps.information.outputs.GIT_LAST_COMMIT }}
+
+      - name: Publish binary
+        run: |
+          FROM="./target/$LEVEL_FOLDER/examples/format${{ matrix.executable-extension }}"
+          TO="format-${{ matrix.platform-name }}${{ matrix.executable-extension }}"
+          gh release upload $GH_RELEASE_TAG "$FROM#$TO" --clobber
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
