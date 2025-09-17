@@ -39,7 +39,12 @@ jobs:
     - name: Check formatting with rustfmt
       run: cargo fmt --all --check
 
-    # TODO run self here!
+    - uses: kaleidawave/release-downloader@improvements
+      with:
+        items: kaleidawave/simple-toml-parser@canary[format]
+      
+    - name: Check 'Cargo.toml' formatting
+      run: format Cargo.toml --check
 
   tests:
     needs: validity
@@ -78,17 +83,13 @@ jobs:
   publish-ability:
     runs-on: ubuntu-latest
 
-    # TODO replace with own tool
-    if: false 
     steps:
-    - uses: actions/checkout@v4
-    - name: Check that it will publish to crates
-      run: |
-        cargo metadata --offline --format-version 1 --no-deps | jq -r ".workspace_members[]" | while read -r _n _v pathInfo ; do
-          cd ${pathInfo:13:-1}
-          cargo publish --no-verify --dry-run
-        done
-      shell: bash
+    - uses: kaleidawave/release-downloader@improvements
+      with:
+        items: kaleidawave/crates-release-gh-action@assets[crates-release]
+      
+    - name: Verify ready for publish
+      run: crates-release verify
 
   # TEMP
   publish-assets:
@@ -121,23 +122,23 @@ jobs:
 
       - name: Set variables
         id: information
+        shell: bash
         run: |
           echo "GITHUB_RUN_DATE=$(TZ="Europe/London" date +"%Y-%m-%d %T")" >> "$GITHUB_OUTPUT"
           echo "GIT_LAST_COMMIT=$(git log -n 1 --format="%H")" >> "$GITHUB_OUTPUT"
 
-        shell: bash
-
       - name: Build binary
         run: cargo build --example format --profile $LEVEL
+        shell: bash
         env:
           GITHUB_RUN_DATE: ${{ steps.information.outputs.GITHUB_RUN_DATE }}
           GIT_LAST_COMMIT: ${{ steps.information.outputs.GIT_LAST_COMMIT }}
 
       - name: Publish binary
+        shell: bash
         run: |
           FROM="./target/$LEVEL_FOLDER/examples/format${{ matrix.executable-extension }}"
           TO="format-${{ matrix.platform-name }}${{ matrix.executable-extension }}"
           gh release upload $GH_RELEASE_TAG "$FROM#$TO" --clobber
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

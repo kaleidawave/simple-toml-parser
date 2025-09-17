@@ -14,6 +14,21 @@ See examples and tests for usage.
 spectra check ./specification.md "./target/debug/examples/parse --rpc --interactive"
 ```
 
+### Formatter
+
+There is an included formatter
+
+You can use it in GitHub actions with the following
+
+```yml
+- uses: kaleidawave/release-downloader@improvements
+  with:
+    items: kaleidawave/simple-toml-parser@canary[format]
+  
+- name: Check 'Cargo.toml' formatting
+  run: format Cargo.toml --check
+```
+
 ### Links
 
 - <https://toml.io/en/v1.0.0>

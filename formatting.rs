@@ -274,12 +274,11 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
 
             {
                 if !same_table {
-                    // char::is_whitespace
                     let is_start = buf.is_empty();
                     if !(is_start || buf.ends_with('\n')) {
                         buf.push_str(new_line_sequence);
                     }
-                    if !is_start {
+                    if !(is_start || last_line_is_comment(&buf)) {
                         buf.push_str(new_line_sequence);
                     }
                     let is_table = this_table
@@ -399,7 +398,6 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                             || buf.ends_with("= ")
                             || buf.ends_with(indent))
                         {
-                            dbg!();
                             if pretty {
                                 write!(&mut buf, "{new_line_sequence}").unwrap();
                                 for _ in 1..this_value.len() {
@@ -456,7 +454,7 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
                         let should_add_second = !buf.is_empty()
                             && buf
                                 .rsplit_once('\n')
-                                .is_none_or(|(_, after)| !after.starts_with('#'))
+                                .is_none_or(|(_, after)| !after.starts_with(['#', '[']))
                             && this_value.is_empty();
                         if should_add_second {
                             buf.push_str(new_line_sequence);
@@ -513,9 +511,7 @@ pub fn format_toml<'a>(input: &'a str, options: &FormatOptions) -> Result<String
         &mut buf,
     );
 
-    if let Some((_, after)) = buf.rsplit_once('\n')
-        && after.starts_with('#')
-    {
+    if !buf.ends_with('\n') {
         write!(&mut buf, "{new_line_sequence}").unwrap();
     }
 
@@ -589,4 +585,14 @@ fn is_array_chain(this_value: &[TOMLKey<'_>]) -> bool {
     this_value[..this_value.len().saturating_sub(1)]
         .iter()
         .all(|key| matches!(key, TOMLKey::Index(_)))
+}
+
+fn last_line_is_comment(buf: &str) -> bool {
+    if let Some((_, after)) = buf.rsplit_once('\n')
+        && after.starts_with('#')
+    {
+        true
+    } else {
+        false
+    }
 }
