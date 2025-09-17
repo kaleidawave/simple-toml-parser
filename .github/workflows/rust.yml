@@ -14,65 +14,131 @@ env:
     ~/.cargo/registry/cache/
     ~/.cargo/git/db/
     target/
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   validity:
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
     - name: Check source is valid
       run: cargo check --workspace
 
   formating:
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
+
     - name: Check formatting with rustfmt
       run: cargo fmt --all --check
-    - uses: brndnmtthws/rust-action-cargo-binstall@v1
+
+    - uses: kaleidawave/release-downloader@improvements
       with:
-        packages: taplo-cli
-    - name: Check TOML formatting with taplo
-      run: |
-        taplo fmt --check **/*/Cargo.toml
+        items: kaleidawave/simple-toml-parser@canary[format]
+      
+    - name: Check 'Cargo.toml' formatting
+      run: format Cargo.toml --check
 
   tests:
     needs: validity
+
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - uses: kaleidawave/release-downloader@improvements
+      with:
+        items: kaleidawave/experiments@assets[spectra]
+
     - name: Run all tests
       run: cargo test --workspace --verbose --all-features
 
   clippy:
     needs: validity
+    
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_PATHS }}
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
     - name: Lint code with clippy
       run: cargo clippy
 
   publish-ability:
     runs-on: ubuntu-latest
-    if: false
+
     steps:
-    - uses: actions/checkout@v4
-    - name: Check that it will publish to crates
-      run: |
-        cargo metadata --offline --format-version 1 --no-deps | jq -r ".workspace_members[]" | while read -r _n _v pathInfo ; do
-          cd ${pathInfo:13:-1}
-          cargo publish --no-verify --dry-run
-        done
-      shell: bash
+    - uses: kaleidawave/release-downloader@improvements
+      with:
+        items: kaleidawave/crates-release-gh-action@assets[crates-release]
+      
+    - name: Verify ready for publish
+      run: crates-release verify
+
+  # TEMP
+  publish-assets:
+    needs: validity
+
+    permissions: write-all
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+        - os: windows-latest
+          platform-name: x86_64-pc-windows
+          executable-extension: ".exe"
+        - os: ubuntu-latest
+          platform-name: x86_64-unknown-linux
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      GH_RELEASE_TAG: canary
+      # why can these not be the same :(
+      LEVEL: dev
+      LEVEL_FOLDER: debug
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Set variables
+        id: information
+        shell: bash
+        run: |
+          echo "GITHUB_RUN_DATE=$(TZ="Europe/London" date +"%Y-%m-%d %T")" >> "$GITHUB_OUTPUT"
+          echo "GIT_LAST_COMMIT=$(git log -n 1 --format="%H")" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        run: cargo build --example format --profile $LEVEL
+        shell: bash
+        env:
+          GITHUB_RUN_DATE: ${{ steps.information.outputs.GITHUB_RUN_DATE }}
+          GIT_LAST_COMMIT: ${{ steps.information.outputs.GIT_LAST_COMMIT }}
+
+      - name: Publish binary
+        shell: bash
+        run: |
+          FROM="./target/$LEVEL_FOLDER/examples/format${{ matrix.executable-extension }}"
+          TO="format-${{ matrix.platform-name }}${{ matrix.executable-extension }}"
+          gh release upload $GH_RELEASE_TAG "$FROM#$TO" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
